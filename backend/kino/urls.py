@@ -1,7 +1,20 @@
 from django.urls import path
-from .views import window_analysis_list, window_relations_detail
+from .views import (
+    window_analysis_list,
+    number_relations_detail,
+    general_relations_detail,
+)
 
 urlpatterns = [
     path("windows/", window_analysis_list, name="window-analysis-list"),
-    path("windows/<int:window_id>/relations/", window_relations_detail, name="window-relations-detail"),
+    path(
+        "windows/<int:window_id>/relations/<int:number>/",
+        number_relations_detail,
+        name="number-relations-detail",
+    ),
+    path(
+        "windows/<int:window_id>/general-relations/",
+        general_relations_detail,
+        name="general-relations-detail",
+    ),
 ]

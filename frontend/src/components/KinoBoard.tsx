@@ -8,6 +8,7 @@ type KinoBoardProps = {
     numbersData: WindowNumber[];
     maxHeat?: number;
     showSplitOnClick?: boolean;
+    onNumberClick?: (number: number) => void;
 };
 
 function KinoBoard({
@@ -16,7 +17,8 @@ function KinoBoard({
     numbersData,
     maxHeat = 11,
     showSplitOnClick = false,
-}: KinoBoardProps) {
+    onNumberClick,
+  }: KinoBoardProps) {
     const [selectedNumber, setSelectedNumber] = useState<number | null>(null);
 
     const numberMap = useMemo(() => {
@@ -32,12 +34,14 @@ function KinoBoard({
     const numbers = Array.from({ length: 80 }, (_, index) => index + 1);
 
     function handleBallClick(number: number) {
-        if (!showSplitOnClick) return;
+        if (showSplitOnClick) {
+            setSelectedNumber((current) => {
+                if (current === number) return null;
+                return number;
+            });
+        }
 
-        setSelectedNumber((current) => {
-            if (current === number) return null;
-            return number;
-        });
+        onNumberClick?.(number);
     }
 
     return (

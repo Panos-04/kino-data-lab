@@ -6,6 +6,8 @@ import ModeSwitch from "../components/ModeSwitch";
 import FrameControls from "../components/FrameControls";
 import HeatLegend from "../components/HeatLegend";
 import KinoBoard from "../components/KinoBoard";
+import { saveRelationSelection } from "../utils/relationSelection";
+import { saveFrameSelection } from "../utils/frameSelection";
 
 function TrendFramesPage() {
     const [windows, setWindows] = useState<WindowAnalysis[]>([]);
@@ -19,7 +21,7 @@ function TrendFramesPage() {
             setLoading(true);
 
             try {
-                const data = await fetchWindows(windowSize, stepSize, 500, 10);
+                const data = await fetchWindows(windowSize, stepSize, 500);
                 setWindows(data);
                 setCurrentIndex(0);
             } catch (error) {
@@ -33,7 +35,18 @@ function TrendFramesPage() {
     }, [windowSize, stepSize]);
 
     const currentWindow = windows[currentIndex];
+    useEffect(() => {
+        if (!currentWindow) return;
 
+        saveFrameSelection({
+            windowId: currentWindow.id,
+            frameIndex: currentIndex,
+            windowSize: currentWindow.window_size,
+            stepSize: currentWindow.step_size,
+            startDrawId: currentWindow.start_draw_id,
+            endDrawId: currentWindow.end_draw_id,
+        });
+    }, [currentWindow, currentIndex]);
     function handleChangeMode(newWindowSize: number, newStepSize: number) {
         setWindowSize(newWindowSize);
         setStepSize(newStepSize);
@@ -46,6 +59,17 @@ function TrendFramesPage() {
     function goNext() {
         setCurrentIndex((prev) => Math.min(prev + 1, windows.length - 1));
     }
+    function handleNumberClick(number: number) {
+        if (!currentWindow) return;
+
+        saveRelationSelection({
+            windowId: currentWindow.id,
+            frameIndex: currentIndex,
+            number,
+            windowSize: currentWindow.window_size,
+            stepSize: currentWindow.step_size,
+        });
+    }
 
     return (
         <main className="page">
@@ -53,7 +77,7 @@ function TrendFramesPage() {
                 <div>
                     <h1>KINO Trend Frames</h1>
                     <p>
-                    Frame-by-frame heat tracking for KINO number trends.
+                        Frame-by-frame heat tracking for KINO number trends.
                     </p>
                 </div>
 
@@ -84,6 +108,7 @@ function TrendFramesPage() {
                             numbersData={currentWindow.numbers}
                             maxHeat={11}
                             showSplitOnClick={true}
+                            onNumberClick={handleNumberClick}
                         />
 
                     </section>

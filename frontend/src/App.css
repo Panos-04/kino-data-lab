@@ -214,3 +214,258 @@ body {
     flex-direction: column;
   }
 }
+
+.relations-page {
+  min-height: 100vh;
+}
+
+.relation-empty,
+.relation-panel {
+  background: rgba(15, 23, 42, 0.55);
+  border: 1px solid rgba(250, 204, 21, 0.2);
+  border-radius: 18px;
+  padding: 24px;
+}
+
+.relation-panel h2,
+.relation-empty h2 {
+  color: #facc15;
+  margin-top: 0;
+}
+
+.relation-placeholder {
+  margin-top: 24px;
+  min-height: 420px;
+  border-radius: 16px;
+  border: 1px dashed rgba(250, 204, 21, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #cbd5e1;
+}
+
+.relation-meta {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 20px;
+  color: #cbd5e1;
+}
+
+.anchor-summary {
+  background: rgba(15, 23, 42, 0.7);
+  border: 1px solid rgba(250, 204, 21, 0.18);
+  border-radius: 14px;
+  padding: 16px;
+  margin-bottom: 20px;
+}
+
+.anchor-summary h3,
+.relations-list h3 {
+  margin-top: 0;
+  color: #facc15;
+}
+
+.relations-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.relation-row {
+  display: grid;
+  grid-template-columns: 72px 1fr 64px;
+  gap: 12px;
+  align-items: center;
+  background: rgba(15, 23, 42, 0.65);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 14px;
+  padding: 12px;
+}
+
+.relation-number {
+  width: 52px;
+  height: 42px;
+  border-radius: 999px;
+  background: #facc15;
+  color: #111827;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  font-size: 18px;
+}
+
+.relation-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.relation-info span {
+  color: #cbd5e1;
+  font-size: 13px;
+}
+
+.relation-change {
+  text-align: center;
+  font-weight: 800;
+  border-radius: 999px;
+  padding: 8px 10px;
+}
+
+.relation-change.positive {
+  background: rgba(34, 197, 94, 0.18);
+  color: #86efac;
+}
+
+.relation-change.negative {
+  background: rgba(239, 68, 68, 0.18);
+  color: #fca5a5;
+}
+
+.relation-change.neutral {
+  background: rgba(148, 163, 184, 0.18);
+  color: #cbd5e1;
+}
+
+.general-relations-layout {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  gap: 20px;
+  align-items: start;
+}
+
+.anchor-list {
+  background: rgba(15, 23, 42, 0.55);
+  border: 1px solid rgba(250, 204, 21, 0.18);
+  border-radius: 16px;
+  padding: 14px;
+  max-height: 78vh;
+  overflow: auto;
+}
+
+.anchor-list h3 {
+  margin: 0 0 12px;
+  color: #facc15;
+}
+
+.anchor-card {
+  width: 100%;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 14px;
+  padding: 10px;
+  background: rgba(15, 23, 42, 0.75);
+  color: #e5e7eb;
+  display: grid;
+  grid-template-columns: 42px 1fr;
+  gap: 8px;
+  align-items: center;
+  text-align: left;
+  cursor: pointer;
+  margin-bottom: 8px;
+}
+
+.anchor-card small {
+  grid-column: 2;
+  color: #cbd5e1;
+}
+
+.anchor-card.active {
+  border-color: #facc15;
+  box-shadow: 0 0 0 2px rgba(250, 204, 21, 0.12);
+}
+
+.anchor-card.hot .anchor-number {
+  background: #ef4444;
+  color: white;
+}
+
+.anchor-card.cold .anchor-number {
+  background: #0b2468;
+  color: #a9c6ff;
+}
+
+.anchor-card.middle .anchor-number {
+  background: #facc15;
+  color: #111827;
+}
+
+.anchor-number {
+  width: 38px;
+  height: 34px;
+  border-radius: 999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+}
+
+.anchor-detail {
+  background: rgba(15, 23, 42, 0.45);
+  border: 1px solid rgba(250, 204, 21, 0.18);
+  border-radius: 16px;
+  padding: 16px;
+}
+
+.anchor-detail-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: center;
+  margin-bottom: 18px;
+}
+
+.anchor-detail-header h3 {
+  margin: 0 0 4px;
+  color: #facc15;
+}
+
+.anchor-detail-header p {
+  margin: 0;
+  color: #cbd5e1;
+}
+
+.anchor-summary-mini {
+  background: rgba(15, 23, 42, 0.85);
+  border-radius: 14px;
+  padding: 12px 16px;
+  text-align: center;
+}
+
+.anchor-summary-mini strong {
+  display: block;
+  color: #facc15;
+  font-size: 22px;
+}
+
+.anchor-summary-mini span {
+  color: #cbd5e1;
+  font-size: 12px;
+}
+
+.connection-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+}
+
+.connection-columns h4 {
+  margin: 0 0 12px;
+  color: #facc15;
+}
+
+.relation-number.weak {
+  background: #0b2468;
+  color: #a9c6ff;
+}
+
+@media (max-width: 1000px) {
+  .general-relations-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .connection-columns {
+    grid-template-columns: 1fr;
+  }
+}

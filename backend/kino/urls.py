@@ -4,6 +4,7 @@ from .views import (
     number_relations_detail,
     general_relations_detail,
     combo_test_api,
+    pattern_test_api,
 )
 
 urlpatterns = [
@@ -19,4 +20,5 @@ urlpatterns = [
         name="general-relations-detail",
     ),
     path("combo-test/", combo_test_api, name="combo-test-api"),
+    path("pattern-test/", pattern_test_api, name="pattern-test-api"),
 ]

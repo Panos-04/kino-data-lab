@@ -464,3 +464,158 @@ def combo_test_api(request):
         },
         "best_results": best_results[:20],
     })
+
+ROWS = {
+    1: list(range(1, 11)),
+    2: list(range(11, 21)),
+    3: list(range(21, 31)),
+    4: list(range(31, 41)),
+    5: list(range(41, 51)),
+    6: list(range(51, 61)),
+    7: list(range(61, 71)),
+    8: list(range(71, 81)),
+}
+
+COLUMNS = {
+    col: [col + (row * 10) for row in range(0, 8)]
+    for col in range(1, 11)
+}
+
+@api_view(["GET"])
+def pattern_test_api(request):
+    row_threshold = int(request.GET.get("row_threshold", 6))
+    column_threshold = int(request.GET.get("column_threshold", 5))
+    limit = int(request.GET.get("limit", 20))
+
+    draws = list(KinoDraw.objects.order_by("draw_time"))
+
+    if not draws:
+        return Response({
+            "total_draws": 0,
+            "row_patterns": [],
+            "column_patterns": [],
+            "row_summary": [],
+            "column_summary": [],
+            "streaks": [],
+        })
+
+    def count_hits(draw_numbers, group_numbers):
+        draw_set = set(draw_numbers)
+        hit_numbers = sorted(draw_set.intersection(group_numbers))
+
+        return {
+            "count": len(hit_numbers),
+            "numbers": hit_numbers,
+        }
+
+    from collections import Counter, defaultdict
+
+    row_patterns = []
+    column_patterns = []
+    row_counter = Counter()
+    column_counter = Counter()
+
+    current_streaks = defaultdict(int)
+    best_streaks = defaultdict(int)
+
+    all_keys = (
+        [("row", row_id) for row_id in ROWS.keys()] +
+        [("column", col_id) for col_id in COLUMNS.keys()]
+    )
+
+    for draw in draws:
+        active_keys = set()
+
+        for row_id, row_numbers in ROWS.items():
+            result = count_hits(draw.numbers, row_numbers)
+
+            if result["count"] >= row_threshold:
+                key = ("row", row_id)
+                active_keys.add(key)
+                row_counter[row_id] += 1
+
+                row_patterns.append({
+                    "draw_id": draw.draw_id,
+                    "draw_time": draw.draw_time,
+                    "type": "row",
+                    "group": row_id,
+                    "hit_count": result["count"],
+                    "hit_numbers": result["numbers"],
+                    "draw_numbers": draw.numbers,
+                })
+
+        for column_id, column_numbers in COLUMNS.items():
+            result = count_hits(draw.numbers, column_numbers)
+
+            if result["count"] >= column_threshold:
+                key = ("column", column_id)
+                active_keys.add(key)
+                column_counter[column_id] += 1
+
+                column_patterns.append({
+                    "draw_id": draw.draw_id,
+                    "draw_time": draw.draw_time,
+                    "type": "column",
+                    "group": column_id,
+                    "hit_count": result["count"],
+                    "hit_numbers": result["numbers"],
+                    "draw_numbers": draw.numbers,
+                })
+
+        for key in all_keys:
+            if key in active_keys:
+                current_streaks[key] += 1
+                best_streaks[key] = max(best_streaks[key], current_streaks[key])
+            else:
+                current_streaks[key] = 0
+
+    total_draws = len(draws)
+
+    row_summary = [
+        {
+            "group": row_id,
+            "count": count,
+            "percentage": round((count / total_draws) * 100, 3),
+        }
+        for row_id, count in row_counter.most_common()
+    ]
+
+    column_summary = [
+        {
+            "group": column_id,
+            "count": count,
+            "percentage": round((count / total_draws) * 100, 3),
+        }
+        for column_id, count in column_counter.most_common()
+    ]
+
+    streaks = []
+
+    for key, streak in best_streaks.items():
+        if streak <= 1:
+            continue
+
+        pattern_type, group_id = key
+
+        streaks.append({
+            "type": pattern_type,
+            "group": group_id,
+            "streak": streak,
+        })
+
+    streaks.sort(key=lambda item: item["streak"], reverse=True)
+
+    return Response({
+        "total_draws": total_draws,
+        "row_threshold": row_threshold,
+        "column_threshold": column_threshold,
+        "row_pattern_count": len(row_patterns),
+        "column_pattern_count": len(column_patterns),
+        "row_pattern_percentage": round((len(row_patterns) / total_draws) * 100, 3),
+        "column_pattern_percentage": round((len(column_patterns) / total_draws) * 100, 3),
+        "row_summary": row_summary,
+        "column_summary": column_summary,
+        "streaks": streaks[:20],
+        "row_patterns": row_patterns[:limit],
+        "column_patterns": column_patterns[:limit],
+    })

@@ -3,6 +3,7 @@ from .views import (
     window_analysis_list,
     number_relations_detail,
     general_relations_detail,
+    combo_test_api,
 )
 
 urlpatterns = [
@@ -17,4 +18,5 @@ urlpatterns = [
         general_relations_detail,
         name="general-relations-detail",
     ),
+    path("combo-test/", combo_test_api, name="combo-test-api"),
 ]

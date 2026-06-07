@@ -313,3 +313,154 @@ def general_relations_detail(request, window_id):
         "expected_heat": expected,
         "anchors": anchor_results,
     })
+
+
+def combo_baseline_distribution(pick_count):
+    """
+    Exact hypergeometric baseline for KINO:
+    20 winning numbers from 80 total.
+    """
+    from math import comb
+
+    total = comb(80, pick_count)
+    distribution = {}
+
+    for hits in range(0, pick_count + 1):
+        if hits > 20 or pick_count - hits > 60:
+            probability = 0
+        else:
+            probability = (
+                comb(20, hits) * comb(60, pick_count - hits)
+            ) / total
+
+        distribution[hits] = probability * 100
+
+    return distribution
+
+
+@api_view(["GET"])
+def combo_test_api(request):
+    strategy = request.GET.get("strategy", "cold")
+    window_size = int(request.GET.get("window", 20))
+    step_size = int(request.GET.get("step", 10))
+    pick_count = int(request.GET.get("pick", 5))
+    future_size = int(request.GET.get("future", 1))
+
+    if strategy not in ["cold", "hot", "middle"]:
+        return Response(
+            {"detail": "Invalid strategy. Use cold, hot, or middle."},
+            status=400,
+        )
+
+    windows = (
+        KinoWindowAnalysis.objects
+        .filter(window_size=window_size, step_size=step_size)
+        .prefetch_related("numbers")
+        .order_by("start_time")
+    )
+
+    hit_distribution = Counter()
+    tested_draws = 0
+    skipped_windows = 0
+    best_results = []
+
+    for window in windows:
+        numbers = list(window.numbers.all())
+        expected = window.window_size * 0.25
+
+        if strategy == "cold":
+            selected = sorted(
+                numbers,
+                key=lambda item: (item.count, item.number)
+            )[:pick_count]
+
+        elif strategy == "hot":
+            selected = sorted(
+                numbers,
+                key=lambda item: (-item.count, item.number)
+            )[:pick_count]
+
+        else:
+            selected = sorted(
+                numbers,
+                key=lambda item: (abs(item.count - expected), item.number)
+            )[:pick_count]
+
+        combo = [item.number for item in selected]
+
+        future_draws = list(
+            KinoDraw.objects
+            .filter(draw_time__gt=window.end_time)
+            .order_by("draw_time")[:future_size]
+        )
+
+        if len(future_draws) < future_size:
+            skipped_windows += 1
+            continue
+
+        for draw in future_draws:
+            hit_numbers = sorted(set(combo).intersection(draw.numbers))
+            hit_count = len(hit_numbers)
+
+            hit_distribution[hit_count] += 1
+            tested_draws += 1
+
+            if hit_count >= 4:
+                best_results.append({
+                    "window_id": window.id,
+                    "draw_id": draw.draw_id,
+                    "combo": combo,
+                    "draw_numbers": draw.numbers,
+                    "hit_count": hit_count,
+                    "hit_numbers": hit_numbers,
+                })
+
+    baseline = combo_baseline_distribution(pick_count)
+
+    distribution = []
+
+    for hits in range(0, pick_count + 1):
+        count = hit_distribution[hits]
+        percentage = (count / tested_draws) * 100 if tested_draws else 0
+
+        distribution.append({
+            "hits": hits,
+            "count": count,
+            "percentage": round(percentage, 3),
+            "baseline_percentage": round(baseline[hits], 3),
+            "difference": round(percentage - baseline[hits], 3),
+        })
+
+    four_plus_count = sum(
+        hit_distribution[hits]
+        for hits in range(4, pick_count + 1)
+    )
+
+    four_plus_rate = (
+        (four_plus_count / tested_draws) * 100
+        if tested_draws
+        else 0
+    )
+
+    four_plus_baseline = sum(
+        baseline[hits]
+        for hits in range(4, pick_count + 1)
+    )
+
+    return Response({
+        "strategy": strategy,
+        "window_size": window_size,
+        "step_size": step_size,
+        "pick_count": pick_count,
+        "future_size": future_size,
+        "tested_draws": tested_draws,
+        "skipped_windows": skipped_windows,
+        "distribution": distribution,
+        "four_plus": {
+            "count": four_plus_count,
+            "percentage": round(four_plus_rate, 3),
+            "baseline_percentage": round(four_plus_baseline, 3),
+            "difference": round(four_plus_rate - four_plus_baseline, 3),
+        },
+        "best_results": best_results[:20],
+    })

@@ -5,8 +5,8 @@ from .models import KinoWindowAnalysis
 from .serializers import KinoWindowAnalysisSerializer
 from .models import KinoDraw, KinoWindowAnalysis
 from .services.window_relations import build_window_relations
-from collections import Counter
-
+from collections import Counter, defaultdict
+from .services.shape_detector import detect_shape, detect_all_shapes
 @api_view(["GET"])
 def window_analysis_list(request):
     window_size = request.GET.get("window_size")
@@ -507,14 +507,133 @@ def pattern_test_api(request):
             "count": len(hit_numbers),
             "numbers": hit_numbers,
         }
+    def build_gap_summary(patterns):
+        grouped = defaultdict(list)
 
+        for pattern in patterns:
+            key = (pattern["type"], pattern["group"])
+            grouped[key].append(pattern)
+
+        summaries = []
+
+        for (pattern_type, group_id), items in grouped.items():
+            items = sorted(items, key=lambda item: item["draw_time"])
+
+            gaps = []
+
+            for index in range(1, len(items)):
+                previous = items[index - 1]
+                current = items[index]
+
+                draw_gap = current["draw_id"] - previous["draw_id"]
+
+                gaps.append({
+                    "from_draw_id": previous["draw_id"],
+                    "to_draw_id": current["draw_id"],
+                    "gap": draw_gap,
+                })
+
+            if gaps:
+                gap_values = [item["gap"] for item in gaps]
+
+                summaries.append({
+                    "type": pattern_type,
+                    "group": group_id,
+                    "events": len(items),
+                    "repeat_count": len(gaps),
+                    "min_gap": min(gap_values),
+                    "max_gap": max(gap_values),
+                    "avg_gap": round(sum(gap_values) / len(gap_values), 2),
+                    "examples": gaps[:10],
+                })
+            else:
+                summaries.append({
+                    "type": pattern_type,
+                    "group": group_id,
+                    "events": len(items),
+                    "repeat_count": 0,
+                    "min_gap": None,
+                    "max_gap": None,
+                    "avg_gap": None,
+                    "examples": [],
+                })
+
+        summaries.sort(
+            key=lambda item: (
+                item["avg_gap"] if item["avg_gap"] is not None else 999999,
+                -item["events"],
+            )
+        )
+
+        return summaries
+    
+
+    def build_repeat_rate_summary(patterns, windows=(1, 5, 10, 20, 50, 100)):
+        grouped = defaultdict(list)
+
+        for pattern in patterns:
+            key = (pattern["type"], pattern["group"])
+            grouped[key].append(pattern)
+
+        summaries = []
+
+        for (pattern_type, group_id), items in grouped.items():
+            items = sorted(items, key=lambda item: item["draw_id"])
+            draw_ids = [item["draw_id"] for item in items]
+
+            repeat_rates = []
+
+            for window_size in windows:
+                repeat_count = 0
+
+                # Last event cannot be tested properly because no future repeat after it may exist in DB
+                testable_events = max(len(draw_ids) - 1, 0)
+
+                for index, draw_id in enumerate(draw_ids[:-1]):
+                    future_draws = draw_ids[index + 1:]
+
+                    repeated = any(
+                        0 < future_draw_id - draw_id <= window_size
+                        for future_draw_id in future_draws
+                    )
+
+                    if repeated:
+                        repeat_count += 1
+
+                rate = (
+                    round((repeat_count / testable_events) * 100, 3)
+                    if testable_events
+                    else 0
+                )
+
+                repeat_rates.append({
+                    "within_games": window_size,
+                    "repeat_count": repeat_count,
+                    "tested_events": testable_events,
+                    "repeat_rate": rate,
+                })
+
+            summaries.append({
+                "type": pattern_type,
+                "group": group_id,
+                "events": len(items),
+                "repeat_rates": repeat_rates,
+            })
+
+        summaries.sort(
+            key=lambda item: item["repeat_rates"][2]["repeat_rate"] if len(item["repeat_rates"]) > 2 else 0,
+            reverse=True,
+        )
+
+        return summaries
+    
     from collections import Counter, defaultdict
 
     row_patterns = []
     column_patterns = []
     row_counter = Counter()
     column_counter = Counter()
-
+    
     current_streaks = defaultdict(int)
     best_streaks = defaultdict(int)
 
@@ -605,6 +724,10 @@ def pattern_test_api(request):
 
     streaks.sort(key=lambda item: item["streak"], reverse=True)
 
+    row_gap_summary = build_gap_summary(row_patterns)
+    column_gap_summary = build_gap_summary(column_patterns)
+    row_repeat_summary = build_repeat_rate_summary(row_patterns)
+    column_repeat_summary = build_repeat_rate_summary(column_patterns)
     return Response({
         "total_draws": total_draws,
         "row_threshold": row_threshold,
@@ -616,6 +739,131 @@ def pattern_test_api(request):
         "row_summary": row_summary,
         "column_summary": column_summary,
         "streaks": streaks[:20],
+        "row_gap_summary": row_gap_summary,
+        "column_gap_summary": column_gap_summary,
         "row_patterns": row_patterns[:limit],
         "column_patterns": column_patterns[:limit],
+        "row_repeat_summary": row_repeat_summary,
+        "column_repeat_summary": column_repeat_summary,
+    })
+
+@api_view(["GET"])
+def shape_pattern_test_api(request):
+    shape = request.GET.get("shape", "all")
+    min_hits_raw = request.GET.get("min_hits")
+    limit = int(request.GET.get("limit", 20))
+
+    min_hits = int(min_hits_raw) if min_hits_raw else None
+
+    valid_shapes = [
+        "all",
+        "cross",
+        "box_2x2",
+        "l_shape",
+        "vertical_4",
+        "horizontal_4",
+        "diagonal_down_4",
+        "diagonal_up_4",
+    ]
+
+    if shape not in valid_shapes:
+        return Response(
+            {"detail": "Invalid shape."},
+            status=400,
+        )
+
+    draws = list(KinoDraw.objects.order_by("draw_time"))
+
+    shape_events = []
+    shape_counter = Counter()
+    center_counter = Counter()
+    hit_count_counter = Counter()
+    draws_with_shape = set()
+    events_per_draw = Counter()
+
+    for draw in draws:
+        if shape == "all":
+            events = detect_all_shapes(draw.numbers)
+        else:
+            events = detect_shape(
+                draw_numbers=draw.numbers,
+                shape_name=shape,
+                min_hits=min_hits,
+            )
+
+        if events:
+            draws_with_shape.add(draw.draw_id)
+
+        events_per_draw[draw.draw_id] = len(events)
+
+        for event in events:
+            event_data = {
+                **event,
+                "draw_id": draw.draw_id,
+                "draw_time": draw.draw_time,
+                "draw_numbers": draw.numbers,
+            }
+
+            shape_events.append(event_data)
+            shape_counter[event["shape"]] += 1
+            center_counter[(event["shape"], event["center_number"])] += 1
+            hit_count_counter[(event["shape"], event["hit_count"])] += 1
+
+    total_draws = len(draws)
+    total_events = len(shape_events)
+
+    shape_summary = []
+
+    for shape_name, count in shape_counter.most_common():
+        draws_for_shape = {
+            event["draw_id"]
+            for event in shape_events
+            if event["shape"] == shape_name
+        }
+
+        shape_summary.append({
+            "shape": shape_name,
+            "events": count,
+            "draws_with_shape": len(draws_for_shape),
+            "draw_percentage": round((len(draws_for_shape) / total_draws) * 100, 3) if total_draws else 0,
+            "avg_events_per_draw": round(count / total_draws, 3) if total_draws else 0,
+        })
+
+    center_summary = [
+        {
+            "shape": shape_name,
+            "center_number": center_number,
+            "events": count,
+        }
+        for (shape_name, center_number), count in center_counter.most_common(30)
+    ]
+
+    hit_count_summary = defaultdict(list)
+
+    for (shape_name, hit_count), count in hit_count_counter.items():
+        hit_count_summary[shape_name].append({
+            "hit_count": hit_count,
+            "events": count,
+        })
+
+    hit_count_summary = {
+        shape_name: sorted(rows, key=lambda row: row["hit_count"], reverse=True)
+        for shape_name, rows in hit_count_summary.items()
+    }
+
+    most_events_in_one_draw = max(events_per_draw.values()) if events_per_draw else 0
+
+    return Response({
+        "shape": shape,
+        "min_hits": min_hits,
+        "total_draws": total_draws,
+        "total_events": total_events,
+        "draws_with_any_shape": len(draws_with_shape),
+        "draws_with_any_shape_percentage": round((len(draws_with_shape) / total_draws) * 100, 3) if total_draws else 0,
+        "avg_events_per_draw": round(total_events / total_draws, 3) if total_draws else 0,
+        "most_events_in_one_draw": most_events_in_one_draw,
+        "shape_summary": shape_summary,
+        "center_summary": center_summary,
+        "hit_count_summary": hit_count_summary,
+        "examples": shape_events[:limit],
     })

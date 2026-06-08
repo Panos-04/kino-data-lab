@@ -6,7 +6,7 @@ from .views import (
     combo_test_api,
     pattern_test_api,
 )
-
+from .views import shape_pattern_test_api
 urlpatterns = [
     path("windows/", window_analysis_list, name="window-analysis-list"),
     path(
@@ -21,4 +21,5 @@ urlpatterns = [
     ),
     path("combo-test/", combo_test_api, name="combo-test-api"),
     path("pattern-test/", pattern_test_api, name="pattern-test-api"),
+    path("shape-pattern-test/", shape_pattern_test_api, name="shape-pattern-test-api"),
 ]

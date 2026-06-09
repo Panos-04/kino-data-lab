@@ -30,3 +30,7 @@ build/
 # OS
 .DS_Store
 Thumbs.db
+
+backend/ml_models/*.joblib
+backend/ml_models/*.pkl
+backend/ml_datasets/*.csv

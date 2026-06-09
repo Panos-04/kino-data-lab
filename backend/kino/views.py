@@ -9,6 +9,8 @@ from collections import Counter, defaultdict
 from .services.shape_detector import detect_shape, detect_all_shapes
 from django.db.models import Count, Avg, Min, Max
 from .models import KinoBoardPatternEvent
+from .models import KinoAIResult
+
 @api_view(["GET"])
 def window_analysis_list(request):
     window_size = request.GET.get("window_size")
@@ -1044,4 +1046,30 @@ def board_pattern_events_api(request):
         "column_summary": add_percentage(column_summary, column_events.count()),
         "hit_count_summary": add_percentage(hit_count_summary, total_events),
         "recent_events": recent_events,
+    })
+
+@api_view(["GET"])
+def ai_results_api(request):
+    result = KinoAIResult.objects.order_by("-created_at").first()
+
+    if result is None:
+        return Response({
+            "has_result": False,
+            "message": "No AI result found. Run python manage.py train_number_ai first.",
+        })
+
+    return Response({
+        "has_result": True,
+        "id": result.id,
+        "model_name": result.model_name,
+        "train_draws": result.train_draws,
+        "test_draws": result.test_draws,
+        "baseline_top20_hits": result.baseline_top20_hits,
+        "model_top20_hits": result.model_top20_hits,
+        "lift": result.lift,
+        "accuracy": result.accuracy,
+        "precision": result.precision,
+        "recall": result.recall,
+        "created_at": result.created_at,
+        "data": result.data,
     })

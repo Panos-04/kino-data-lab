@@ -268,3 +268,31 @@ class KinoBoardPatternEvent(models.Model):
             f"draw {self.draw.draw_id} "
             f"{self.hit_count}/{len(self.group_numbers)}"
         )
+    
+class KinoAIResult(models.Model):
+    model_name = models.CharField(max_length=100, default="number_ai_v1")
+
+    train_draws = models.IntegerField(default=0)
+    test_draws = models.IntegerField(default=0)
+
+    baseline_top20_hits = models.FloatField(default=5.0)
+    model_top20_hits = models.FloatField(default=0)
+    lift = models.FloatField(default=0)
+
+    accuracy = models.FloatField(default=0)
+    precision = models.FloatField(default=0)
+    recall = models.FloatField(default=0)
+
+    data = models.JSONField(default=dict)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return (
+            f"{self.model_name} | "
+            f"top20 {self.model_top20_hits:.3f} | "
+            f"lift {self.lift:.3f}"
+        )

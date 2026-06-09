@@ -7,6 +7,7 @@ from .views import (
     pattern_test_api,
     shape_movements_api,
     board_pattern_events_api,
+    ai_results_api,
 )
 from .views import shape_pattern_test_api
 urlpatterns = [
@@ -25,5 +26,6 @@ urlpatterns = [
     path("pattern-test/", pattern_test_api, name="pattern-test-api"),
     path("shape-pattern-test/", shape_pattern_test_api, name="shape-pattern-test-api"),
     path("shape-movements/", shape_movements_api, name="shape-movements-api"),
+    path("ai-results/", ai_results_api, name="ai_results_api"),
     path("board-pattern-events/", board_pattern_events_api, name="board-pattern-events-api"),
 ]

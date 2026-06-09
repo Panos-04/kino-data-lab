@@ -111,3 +111,160 @@ class KinoWindowRelation(models.Model):
 
     def __str__(self):
         return f"{self.anchor.number} → {self.related_number}: {self.total_count}"
+    
+class KinoShapeEvent(models.Model):
+    draw = models.ForeignKey(
+        KinoDraw,
+        on_delete=models.CASCADE,
+        related_name="shape_events"
+    )
+
+    shape = models.CharField(max_length=40)
+
+    center_number = models.IntegerField()
+    center_row = models.IntegerField()
+    center_col = models.IntegerField()
+
+    shape_numbers = models.JSONField()
+    hit_numbers = models.JSONField()
+
+    hit_count = models.IntegerField()
+    shape_size = models.IntegerField()
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["shape"]),
+            models.Index(fields=["center_number"]),
+            models.Index(fields=["draw"]),
+            models.Index(fields=["shape", "center_number"]),
+        ]
+        unique_together = (
+            "draw",
+            "shape",
+            "center_number",
+            "hit_count",
+        )
+
+    def __str__(self):
+        return (
+            f"{self.shape} center {self.center_number} "
+            f"draw {self.draw.draw_id} {self.hit_count}/{self.shape_size}"
+        )
+
+
+class KinoShapeMovement(models.Model):
+    from_event = models.ForeignKey(
+        KinoShapeEvent,
+        on_delete=models.CASCADE,
+        related_name="movements_from"
+    )
+
+    to_event = models.ForeignKey(
+        KinoShapeEvent,
+        on_delete=models.CASCADE,
+        related_name="movements_to"
+    )
+
+    shape = models.CharField(max_length=40)
+
+    from_draw_id = models.BigIntegerField()
+    to_draw_id = models.BigIntegerField()
+
+    from_center = models.IntegerField()
+    to_center = models.IntegerField()
+
+    delta_row = models.IntegerField()
+    delta_col = models.IntegerField()
+    gap = models.IntegerField()
+
+    overlap_score = models.IntegerField(default=0)
+    distance_score = models.IntegerField(default=0)
+
+    mode = models.CharField(max_length=30, default="one-to-one")
+    future_window = models.IntegerField(default=10)
+    min_hits = models.IntegerField(default=4)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["shape"]),
+            models.Index(fields=["delta_row", "delta_col"]),
+            models.Index(fields=["gap"]),
+            models.Index(fields=["from_center", "to_center"]),
+            models.Index(fields=["mode"]),
+        ]
+        unique_together = (
+            "from_event",
+            "to_event",
+            "mode",
+            "future_window",
+            "min_hits",
+        )
+
+    def __str__(self):
+        return (
+            f"{self.shape}: {self.from_center} → {self.to_center} "
+            f"Δr {self.delta_row:+}, Δc {self.delta_col:+}, gap {self.gap}"
+        )
+    
+class KinoAnalysisState(models.Model):
+    key = models.CharField(max_length=100, unique=True)
+    value = models.JSONField(default=dict)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return self.key
+    
+class KinoBoardPatternEvent(models.Model):
+    PATTERN_TYPES = (
+        ("row", "Row"),
+        ("column", "Column"),
+    )
+
+    draw = models.ForeignKey(
+        KinoDraw,
+        on_delete=models.CASCADE,
+        related_name="board_pattern_events"
+    )
+
+    pattern_type = models.CharField(max_length=20, choices=PATTERN_TYPES)
+
+    # row number 1-8 or column number 1-10
+    group_number = models.IntegerField()
+
+    group_numbers = models.JSONField()
+    hit_numbers = models.JSONField()
+
+    hit_count = models.IntegerField()
+    threshold = models.IntegerField()
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["pattern_type"]),
+            models.Index(fields=["group_number"]),
+            models.Index(fields=["hit_count"]),
+            models.Index(fields=["threshold"]),
+            models.Index(fields=["draw"]),
+            models.Index(fields=["pattern_type", "group_number"]),
+        ]
+
+        unique_together = (
+            "draw",
+            "pattern_type",
+            "group_number",
+            "threshold",
+        )
+
+        ordering = ["draw__draw_time", "pattern_type", "group_number"]
+
+    def __str__(self):
+        return (
+            f"{self.pattern_type} {self.group_number} "
+            f"draw {self.draw.draw_id} "
+            f"{self.hit_count}/{len(self.group_numbers)}"
+        )

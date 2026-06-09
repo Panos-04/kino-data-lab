@@ -3,10 +3,12 @@ from rest_framework.response import Response
 
 from .models import KinoWindowAnalysis
 from .serializers import KinoWindowAnalysisSerializer
-from .models import KinoDraw, KinoWindowAnalysis
+from .models import KinoDraw, KinoWindowAnalysis, KinoShapeMovement
 from .services.window_relations import build_window_relations
 from collections import Counter, defaultdict
 from .services.shape_detector import detect_shape, detect_all_shapes
+from django.db.models import Count, Avg, Min, Max
+from .models import KinoBoardPatternEvent
 @api_view(["GET"])
 def window_analysis_list(request):
     window_size = request.GET.get("window_size")
@@ -866,4 +868,180 @@ def shape_pattern_test_api(request):
         "center_summary": center_summary,
         "hit_count_summary": hit_count_summary,
         "examples": shape_events[:limit],
+    })
+
+@api_view(["GET"])
+def shape_movements_api(request):
+    shape = request.GET.get("shape", "cross")
+    mode = request.GET.get("mode", "one-to-one")
+    min_hits = int(request.GET.get("min_hits", 4))
+    future_window = int(request.GET.get("future", 10))
+    limit = int(request.GET.get("limit", 30))
+
+    queryset = KinoShapeMovement.objects.filter(
+        shape=shape,
+        mode=mode,
+        min_hits=min_hits,
+        future_window=future_window,
+    )
+
+    total_movements = queryset.count()
+
+    vector_summary = list(
+        queryset.values("delta_row", "delta_col")
+        .annotate(count=Count("id"))
+        .order_by("-count")[:limit]
+    )
+
+    gap_summary = list(
+        queryset.values("gap")
+        .annotate(count=Count("id"))
+        .order_by("gap")
+    )
+
+    center_summary = list(
+        queryset.values("from_center", "to_center")
+        .annotate(count=Count("id"))
+        .order_by("-count")[:limit]
+    )
+
+    examples = list(
+        queryset.order_by("-id")
+        .values(
+            "id",
+            "from_draw_id",
+            "to_draw_id",
+            "from_center",
+            "to_center",
+            "delta_row",
+            "delta_col",
+            "gap",
+            "overlap_score",
+            "distance_score",
+        )[:limit]
+    )
+
+    def with_percentage(rows):
+        output = []
+
+        for row in rows:
+            count = row["count"]
+            percentage = (count / total_movements) * 100 if total_movements else 0
+
+            output.append({
+                **row,
+                "percentage": round(percentage, 3),
+            })
+
+        return output
+
+    return Response({
+        "shape": shape,
+        "mode": mode,
+        "min_hits": min_hits,
+        "future_window": future_window,
+        "total_movements": total_movements,
+        "vector_summary": with_percentage(vector_summary),
+        "gap_summary": with_percentage(gap_summary),
+        "center_summary": with_percentage(center_summary),
+        "examples": examples,
+    })
+
+@api_view(["GET"])
+def board_pattern_events_api(request):
+    row_threshold = int(request.GET.get("row_threshold", 6))
+    column_threshold = int(request.GET.get("column_threshold", 5))
+    limit = int(request.GET.get("limit", 30))
+
+    queryset = KinoBoardPatternEvent.objects.filter(
+        threshold__in=[row_threshold, column_threshold]
+    ).select_related("draw")
+
+    total_events = queryset.count()
+
+    row_events = queryset.filter(pattern_type="row")
+    column_events = queryset.filter(pattern_type="column")
+
+    row_summary = list(
+        row_events.values("group_number")
+        .annotate(
+            count=Count("id"),
+            avg_hits=Avg("hit_count"),
+            min_hits=Min("hit_count"),
+            max_hits=Max("hit_count"),
+        )
+        .order_by("-count")
+    )
+
+    column_summary = list(
+        column_events.values("group_number")
+        .annotate(
+            count=Count("id"),
+            avg_hits=Avg("hit_count"),
+            min_hits=Min("hit_count"),
+            max_hits=Max("hit_count"),
+        )
+        .order_by("-count")
+    )
+
+    hit_count_summary = list(
+        queryset.values("pattern_type", "hit_count")
+        .annotate(count=Count("id"))
+        .order_by("pattern_type", "-hit_count")
+    )
+
+    recent_events_raw = list(
+        queryset.order_by("-draw__draw_time")
+        .values(
+            "id",
+            "draw__draw_id",
+            "draw__draw_time",
+            "pattern_type",
+            "group_number",
+            "group_numbers",
+            "hit_numbers",
+            "hit_count",
+            "threshold",
+        )[:limit]
+    )
+
+    recent_events = []
+
+    for event in recent_events_raw:
+        recent_events.append({
+            "id": event["id"],
+            "draw_id": event["draw__draw_id"],
+            "draw_time": event["draw__draw_time"],
+            "pattern_type": event["pattern_type"],
+            "group_number": event["group_number"],
+            "group_numbers": event["group_numbers"],
+            "hit_numbers": event["hit_numbers"],
+            "hit_count": event["hit_count"],
+            "threshold": event["threshold"],
+        })
+
+    def add_percentage(rows, denominator):
+        output = []
+
+        for row in rows:
+            count = row["count"]
+            percentage = (count / denominator) * 100 if denominator else 0
+
+            output.append({
+                **row,
+                "percentage": round(percentage, 3),
+            })
+
+        return output
+
+    return Response({
+        "row_threshold": row_threshold,
+        "column_threshold": column_threshold,
+        "total_events": total_events,
+        "row_event_count": row_events.count(),
+        "column_event_count": column_events.count(),
+        "row_summary": add_percentage(row_summary, row_events.count()),
+        "column_summary": add_percentage(column_summary, column_events.count()),
+        "hit_count_summary": add_percentage(hit_count_summary, total_events),
+        "recent_events": recent_events,
     })

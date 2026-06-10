@@ -2,29 +2,27 @@ from django.core.management import call_command
 from django.core.management.base import BaseCommand
 from django.utils import timezone
 
-from kino.models import KinoDraw
-
 
 class Command(BaseCommand):
-    help = "Run full KINO analysis pipeline sequentially"
+    help = "Run full KINO pipeline: sync, windows, patterns, shapes, movements, and AI training"
 
     def add_arguments(self, parser):
         parser.add_argument(
             "--skip-sync",
             action="store_true",
-            help="Skip importing latest draws",
+            help="Skip syncing latest KINO draws",
         )
 
         parser.add_argument(
             "--skip-heavy",
             action="store_true",
-            help="Skip shape events and shape movements",
+            help="Skip heavy pattern/shape/movement rebuilds",
         )
 
         parser.add_argument(
-            "--skip-reports",
+            "--skip-ai",
             action="store_true",
-            help="Skip terminal report commands like combo/pattern tests",
+            help="Skip AI training at the end",
         )
 
         parser.add_argument(
@@ -36,186 +34,165 @@ class Command(BaseCommand):
         parser.add_argument(
             "--rebuild-movements",
             action="store_true",
-            help="Rebuild shape movement rows from scratch",
+            help="Rebuild shape movements from scratch",
+        )
+
+        parser.add_argument(
+            "--row-threshold",
+            type=int,
+            default=6,
+        )
+
+        parser.add_argument(
+            "--column-threshold",
+            type=int,
+            default=5,
+        )
+
+        parser.add_argument(
+            "--shape-min-hits",
+            type=int,
+            default=4,
+        )
+
+        parser.add_argument(
+            "--movement-future",
+            type=int,
+            default=10,
+        )
+
+        parser.add_argument(
+            "--movement-mode",
+            type=str,
+            default="one-to-one",
+        )
+
+        parser.add_argument(
+            "--ai-horizon",
+            type=int,
+            default=10,
+        )
+
+        parser.add_argument(
+            "--ai-decision-step",
+            type=int,
+            default=5,
+        )
+
+        parser.add_argument(
+            "--ai-pick",
+            type=int,
+            default=12,
+        )
+
+        parser.add_argument(
+            "--ai-target-hits",
+            type=int,
+            default=3,
         )
 
     def handle(self, *args, **options):
-        skip_sync = options["skip_sync"]
-        skip_heavy = options["skip_heavy"]
-        skip_reports = options["skip_reports"]
-        rebuild_shapes = options["rebuild_shapes"]
-        rebuild_movements = options["rebuild_movements"]
-
         started_at = timezone.now()
 
+        def step(title):
+            self.stdout.write("")
+            self.stdout.write(self.style.WARNING(f"▶ {title}"))
+
+        def done(title):
+            self.stdout.write(self.style.SUCCESS(f"✓ {title}"))
+
+        def run_command(name, *cmd_args, **cmd_options):
+            step(f"Running {name}...")
+
+            call_command(
+                name,
+                *cmd_args,
+                **cmd_options,
+            )
+
+            done(f"{name} finished")
+
         self.stdout.write("")
-        self.stdout.write(self.style.WARNING("==================================="))
-        self.stdout.write(self.style.WARNING("Running full KINO analysis pipeline"))
-        self.stdout.write(self.style.WARNING("==================================="))
+        self.stdout.write(self.style.SUCCESS("Starting KINO full pipeline"))
+        self.stdout.write(f"Started at: {started_at}")
 
-        latest_before = KinoDraw.objects.order_by("-draw_id").first()
-
-        if latest_before:
-            self.stdout.write(f"Latest draw before: {latest_before.draw_id}")
-        else:
-            self.stdout.write("Latest draw before: none")
-
+        # ------------------------------------------------------------
         # 1. Sync latest draws
-        if not skip_sync:
-            self.stdout.write("")
-            self.stdout.write(self.style.WARNING("Step 1: Sync latest draws"))
-            call_command("sync_kino_latest")
-        else:
-            self.stdout.write("")
-            self.stdout.write(self.style.WARNING("Step 1 skipped: Sync latest draws"))
+        # ------------------------------------------------------------
 
+        if not options["skip_sync"]:
+            run_command("sync_kino_latest")
+        else:
+            self.stdout.write(self.style.WARNING("Skipping sync_kino_latest"))
+
+        # ------------------------------------------------------------
         # 2. Build windows
-        self.stdout.write("")
-        self.stdout.write(self.style.WARNING("Step 2: Build 20/10 windows"))
-        call_command("build_windows_incremental", window=20, step=10)
+        # ------------------------------------------------------------
 
-        self.stdout.write("")
-        self.stdout.write(self.style.WARNING("Step 3: Build 10/5 windows"))
-        call_command("build_windows_incremental", window=10, step=5)
-        self.stdout.write("")
-        self.stdout.write(self.style.WARNING("Step 4: Build board pattern events"))
-        call_command(
-            "build_board_pattern_events",
-            row_threshold=6,
-            column_threshold=5,
-        )
-        # 3. Heavy shape analysis
-        if not skip_heavy:
-            self.stdout.write("")
-            self.stdout.write(self.style.WARNING("Step 4: Build shape events"))
+        run_command("build_windows_incremental")
 
-            if rebuild_shapes:
-                call_command("build_shape_events", shape="all", rebuild=True)
-            else:
-                call_command("build_shape_events", shape="all")
+        # ------------------------------------------------------------
+        # 3. Build board pattern events
+        # ------------------------------------------------------------
 
-            movement_shapes = [
-                "cross",
-                "box_2x2",
-                "vertical_4",
-                "horizontal_4",
-                "diagonal_down_4",
-                "diagonal_up_4",
-                "l_shape",
-            ]
-
-            step_number = 5
-
-            for shape in movement_shapes:
-                self.stdout.write("")
-                self.stdout.write(
-                    self.style.WARNING(
-                        f"Step {step_number}: Build shape movements for {shape}"
-                    )
-                )
-
-                if rebuild_movements:
-                    call_command(
-                        "build_shape_movements",
-                        shape=shape,
-                        min_hits=4,
-                        future=10,
-                        mode="one-to-one",
-                        rebuild=True,
-                    )
-                else:
-                    call_command(
-                        "build_shape_movements",
-                        shape=shape,
-                        min_hits=4,
-                        future=10,
-                        mode="one-to-one",
-                    )
-
-                step_number += 1
+        if not options["skip_heavy"]:
+            run_command(
+                "build_board_pattern_events",
+                row_threshold=options["row_threshold"],
+                column_threshold=options["column_threshold"],
+            )
         else:
-            self.stdout.write("")
-            self.stdout.write(self.style.WARNING("Heavy shape analysis skipped"))
+            self.stdout.write(self.style.WARNING("Skipping board pattern events"))
 
-        # 4. Reports / terminal tests
-        if not skip_reports:
-            self.stdout.write("")
-            self.stdout.write(self.style.WARNING("Running report commands"))
+        # ------------------------------------------------------------
+        # 4. Build shape events
+        # ------------------------------------------------------------
 
-            self.stdout.write("")
-            self.stdout.write(self.style.WARNING("Report: Row/column board patterns"))
-            call_command(
-                "test_board_patterns",
-                row_threshold=6,
-                column_threshold=5,
-                limit_results=10,
-            )
-
-            self.stdout.write("")
-            self.stdout.write(self.style.WARNING("Report: Cold combo hits"))
-            call_command(
-                "test_combo_hits",
-                strategy="cold",
-                window=20,
-                step=10,
-                pick=5,
-                future=1,
-            )
-
-            self.stdout.write("")
-            self.stdout.write(self.style.WARNING("Report: Hot combo hits"))
-            call_command(
-                "test_combo_hits",
-                strategy="hot",
-                window=20,
-                step=10,
-                pick=5,
-                future=1,
-            )
-
-            self.stdout.write("")
-            self.stdout.write(self.style.WARNING("Report: Middle combo hits"))
-            call_command(
-                "test_combo_hits",
-                strategy="middle",
-                window=20,
-                step=10,
-                pick=5,
-                future=1,
-            )
-
-            self.stdout.write("")
-            self.stdout.write(self.style.WARNING("Report: Shape patterns"))
-            call_command(
-                "test_shape_patterns",
+        if not options["skip_heavy"]:
+            run_command(
+                "build_shape_events",
                 shape="all",
-                limit=10,
-            )
-
-            self.stdout.write("")
-            self.stdout.write(self.style.WARNING("Report: Cross movement check"))
-            call_command(
-                "test_shape_movements",
-                shape="cross",
-                min_hits=4,
-                future=10,
-                mode="one-to-one",
-                limit=10,
+                min_hits=options["shape_min_hits"],
+                rebuild=options["rebuild_shapes"],
             )
         else:
-            self.stdout.write("")
-            self.stdout.write(self.style.WARNING("Report commands skipped"))
+            self.stdout.write(self.style.WARNING("Skipping shape events"))
 
-        latest_after = KinoDraw.objects.order_by("-draw_id").first()
+        # ------------------------------------------------------------
+        # 5. Build shape movements
+        # ------------------------------------------------------------
+
+        if not options["skip_heavy"]:
+            run_command(
+                "build_shape_movements",
+                shape="all",
+                min_hits=options["shape_min_hits"],
+                future=options["movement_future"],
+                mode=options["movement_mode"],
+                rebuild=options["rebuild_movements"],
+            )
+        else:
+            self.stdout.write(self.style.WARNING("Skipping shape movements"))
+
+        # ------------------------------------------------------------
+        # 6. Train AI model
+        # ------------------------------------------------------------
+
+        if not options["skip_ai"]:
+            run_command(
+                "train_number_ai_10game",
+                horizon=options["ai_horizon"],
+                decision_step=options["ai_decision_step"],
+                pick=options["ai_pick"],
+                target_hits=options["ai_target_hits"],
+            )
+        else:
+            self.stdout.write(self.style.WARNING("Skipping AI training"))
+
         finished_at = timezone.now()
         duration = finished_at - started_at
 
         self.stdout.write("")
-        self.stdout.write(self.style.SUCCESS("==================================="))
-        self.stdout.write(self.style.SUCCESS("KINO pipeline finished"))
-        self.stdout.write(self.style.SUCCESS("==================================="))
-
-        if latest_after:
-            self.stdout.write(f"Latest draw after: {latest_after.draw_id}")
-
+        self.stdout.write(self.style.SUCCESS("KINO full pipeline completed"))
+        self.stdout.write(f"Finished at: {finished_at}")
         self.stdout.write(f"Duration: {duration}")

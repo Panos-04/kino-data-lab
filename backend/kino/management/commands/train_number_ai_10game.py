@@ -21,7 +21,7 @@ from kino.models import (
 
 
 class Command(BaseCommand):
-    help = "Train V4 operation-aware AI model to score KINO numbers for a future window"
+    help = "Train operation-aware KINO AI model with profit/ROI backtesting"
 
     def add_arguments(self, parser):
         parser.add_argument("--horizon", type=int, default=10)
@@ -31,6 +31,21 @@ class Command(BaseCommand):
         parser.add_argument("--target-hits", type=int, default=3)
         parser.add_argument("--pick", type=int, default=12)
 
+        parser.add_argument(
+            "--stake",
+            type=float,
+            default=1.0,
+            help="Cost per combo per round. Example: 1 means €1 per round.",
+        )
+
+        parser.add_argument(
+            "--payout-table",
+            type=str,
+            default="kino",
+            choices=["kino", "bonus"],
+            help="Use normal KINO or KINO BONUS 12-number payout table.",
+        )
+
     def handle(self, *args, **options):
         horizon = options["horizon"]
         decision_step = options["decision_step"]
@@ -38,6 +53,118 @@ class Command(BaseCommand):
         test_ratio = options["test_ratio"]
         target_hits = options["target_hits"]
         pick = options["pick"]
+        stake = options["stake"]
+        payout_table_name = options["payout_table"]
+
+        if pick != 12:
+            self.stdout.write(
+                self.style.WARNING(
+                    "This profit backtest currently uses the 12-number KINO payout table. "
+                    "For payout accuracy, use --pick 12."
+                )
+            )
+
+        KINO_12_PAYOUTS = {
+            12: 1_000_000,
+            11: 25_000,
+            10: 2_500,
+            9: 1_000,
+            8: 150,
+            7: 25,
+            6: 5,
+            5: 0,
+            4: 0,
+            3: 0,
+            2: 0,
+            1: 0,
+            0: 4,
+        }
+
+        KINO_BONUS_12_PAYOUTS = {
+            12: 2_000_000,
+            11: 75_000,
+            10: 5_500,
+            9: 2_200,
+            8: 350,
+            7: 50,
+            6: 10,
+            5: 4,
+            4: 3.5,
+            3: 3,
+            2: 2.5,
+            1: 2,
+            0: 0,
+        }
+        KINO_8_PAYOUT = {
+            8: 15_000,
+            7: 1_000,
+            6: 50,
+            5: 5,
+            4: 2,
+            3: 0,
+            2: 0,
+            1: 0,
+            0: 0,
+        }
+        KINO_BONUS_8_PAYOUT = {
+            8: 40_000,
+            7: 3_000,
+            6: 200,
+            5: 30,
+            4: 7,
+            3: 3,
+            2: 2,
+            1: 1,
+            0: 0,
+        }
+        KINO_7_PAYOUT = {
+            7: 5_000,
+            6: 100,
+            5: 20,
+            4: 3,
+            3: 1,
+            2: 0,
+            1: 0,
+            0: 0,
+        }
+        KINO_BONUS_7_PAYOUT = {
+            7: 15_000,
+            6: 400,
+            5: 80,
+            4: 13,
+            3: 8,
+            2: 3,
+            1: 2,
+            0: 0,
+        }
+
+        def get_payout_table(pick_size, payout_table_name):
+            if pick_size == 12:
+                if payout_table_name == "kino":
+                    return KINO_12_PAYOUTS
+                elif payout_table_name == "bonus":
+                    return KINO_BONUS_12_PAYOUTS
+
+            elif pick_size == 8:
+                if payout_table_name == "kino":
+                    return KINO_8_PAYOUT
+                elif payout_table_name == "bonus":
+                    return KINO_BONUS_8_PAYOUT
+            elif pick_size == 7:
+                if payout_table_name == "kino":
+                    return KINO_7_PAYOUT
+                elif payout_table_name == "bonus":
+                    return KINO_BONUS_7_PAYOUT
+            raise ValueError(
+                f"No payout table configured for pick={pick_size}, "
+                f"payout_table={payout_table_name}"
+            )
+
+
+        payout_table = get_payout_table(
+            pick_size=pick,
+            payout_table_name=payout_table_name,
+        )
 
         def log_step(message):
             self.stdout.write("")
@@ -45,10 +172,6 @@ class Command(BaseCommand):
 
         def log_done(message):
             self.stdout.write(self.style.SUCCESS(f"✓ {message}"))
-
-        # ------------------------------------------------------------
-        # Basic helpers
-        # ------------------------------------------------------------
 
         def number_row(number):
             return (number - 1) // 10 + 1
@@ -117,11 +240,14 @@ class Command(BaseCommand):
         log_done(f"Loaded {len(draws):,} draws")
 
         self.stdout.write("")
-        self.stdout.write(self.style.WARNING("Training KINO 10-game Number AI V4..."))
+        self.stdout.write(self.style.WARNING("Training KINO AI with ROI backtest..."))
         self.stdout.write(f"Total draws: {len(draws):,}")
         self.stdout.write(f"Horizon: next {horizon} games")
         self.stdout.write(f"Decision step: every {decision_step} games")
         self.stdout.write(f"Pick size: top {pick} numbers")
+        self.stdout.write(f"Stake per combo per round: €{stake:.2f}")
+        self.stdout.write(f"Cost per decision: €{stake * horizon:.2f}")
+        self.stdout.write(f"Payout table: {payout_table_name}")
         self.stdout.write(
             f"Target: number hits at least {target_hits} times inside next {horizon} games"
         )
@@ -135,7 +261,7 @@ class Command(BaseCommand):
         }
 
         # ------------------------------------------------------------
-        # Number prefix counts
+        # Prefix counts
         # ------------------------------------------------------------
 
         log_step("Building number prefix counts...")
@@ -180,10 +306,10 @@ class Command(BaseCommand):
             return float(prefix[end_index] - prefix[start_index])
 
         # ------------------------------------------------------------
-        # Stored board pattern cache
+        # Board pattern cache
         # ------------------------------------------------------------
 
-        log_step("Loading board pattern events into feature cache...")
+        log_step("Loading board pattern events...")
 
         board_row_events = np.zeros((len(draws), 9), dtype=np.int32)
         board_column_events = np.zeros((len(draws), 11), dtype=np.int32)
@@ -208,7 +334,6 @@ class Command(BaseCommand):
 
             if event.pattern_type == "row":
                 board_row_events[draw_index][event.group_number] += 1
-
             elif event.pattern_type == "column":
                 board_column_events[draw_index][event.group_number] += 1
 
@@ -218,10 +343,10 @@ class Command(BaseCommand):
         log_done(f"Board pattern events loaded: {board_event_count:,}")
 
         # ------------------------------------------------------------
-        # Stored shape cache
+        # Shape cache
         # ------------------------------------------------------------
 
-        log_step("Loading shape events into feature cache...")
+        log_step("Loading shape events...")
 
         shape_number_hits = np.zeros((len(draws), 81), dtype=np.int32)
         shape_number_area = np.zeros((len(draws), 81), dtype=np.int32)
@@ -255,10 +380,10 @@ class Command(BaseCommand):
         log_done(f"Shape events loaded: {shape_event_count:,}")
 
         # ------------------------------------------------------------
-        # Stored movement cache
+        # Movement cache
         # ------------------------------------------------------------
 
-        log_step("Loading shape movements into feature cache...")
+        log_step("Loading shape movements...")
 
         movement_target_centers = np.zeros((len(draws), 81), dtype=np.int32)
         movement_source_centers_completed = np.zeros((len(draws), 81), dtype=np.int32)
@@ -285,7 +410,7 @@ class Command(BaseCommand):
         # Prefix matrices
         # ------------------------------------------------------------
 
-        log_step("Building prefix matrices for stored analysis features...")
+        log_step("Building prefix matrices...")
 
         board_row_events_prefix = make_prefix(board_row_events)
         board_column_events_prefix = make_prefix(board_column_events)
@@ -312,10 +437,10 @@ class Command(BaseCommand):
         shape_total_prefix = make_1d_prefix(shape_total_events)
         movement_total_prefix = make_1d_prefix(movement_total_events)
 
-        log_done("Stored analysis prefix matrices ready")
+        log_done("Prefix matrices ready")
 
         # ------------------------------------------------------------
-        # Operation/intensity vectors per draw
+        # Operation vectors
         # ------------------------------------------------------------
 
         log_step("Building operation/intensity vectors...")
@@ -645,7 +770,7 @@ class Command(BaseCommand):
         ]
 
         # ------------------------------------------------------------
-        # Decision points and regime thresholds
+        # Decision points / regimes
         # ------------------------------------------------------------
 
         decision_indices = list(
@@ -691,22 +816,6 @@ class Command(BaseCommand):
             index: classify_regime(current_pattern_pressure_score(index))
             for index in decision_indices
         }
-
-        regime_counter = defaultdict(int)
-
-        for regime in decision_regime_by_index.values():
-            regime_counter[regime] += 1
-
-        self.stdout.write("")
-        self.stdout.write("Regime thresholds based on training data:")
-        self.stdout.write(f"q25: {regime_thresholds['q25']:.3f}")
-        self.stdout.write(f"q50: {regime_thresholds['q50']:.3f}")
-        self.stdout.write(f"q75: {regime_thresholds['q75']:.3f}")
-
-        self.stdout.write("")
-        self.stdout.write("Decision regime distribution:")
-        for regime, count in sorted(regime_counter.items()):
-            self.stdout.write(f"{regime}: {count:,}")
 
         # ------------------------------------------------------------
         # Build ML rows
@@ -780,14 +889,10 @@ class Command(BaseCommand):
 
         log_done(f"Built ML dataset: {len(X_rows):,} rows")
 
-        log_step("Converting dataset to NumPy arrays...")
-
         X = np.array(X_rows, dtype=np.float32)
         y = np.array(y_rows, dtype=np.int8)
         future_counts = np.array(future_count_rows, dtype=np.int16)
         row_draw_indices = np.array(row_draw_indices, dtype=np.int32)
-
-        log_done(f"X shape: {X.shape}")
 
         train_mask = row_draw_indices < split_draw_index
         test_mask = row_draw_indices >= split_draw_index
@@ -817,11 +922,6 @@ class Command(BaseCommand):
                     f"Training target has only one class: {unique_classes.tolist()}"
                 )
             )
-            self.stdout.write(
-                self.style.WARNING(
-                    "Your target is impossible or too strict for this horizon."
-                )
-            )
             self.stdout.write("Try:")
             self.stdout.write("  horizon 1  -> --target-hits 1")
             self.stdout.write("  horizon 5  -> --target-hits 2")
@@ -847,26 +947,20 @@ class Command(BaseCommand):
             ]
         )
 
-        log_step("Fitting 10-game model...")
+        log_step("Fitting model...")
         model.fit(X_train, y_train)
         log_done("Model fitting complete")
 
         # ------------------------------------------------------------
-        # Pick strategy helpers
+        # Pick helpers
         # ------------------------------------------------------------
 
-        def get_number_row(number):
-            return (number - 1) // 10 + 1
-
-        def get_number_column(number):
-            return (number - 1) % 10 + 1
-
         def are_neighbors(first_number, second_number):
-            first_row = get_number_row(first_number)
-            first_col = get_number_column(first_number)
+            first_row = number_row(first_number)
+            first_col = number_column(first_number)
 
-            second_row = get_number_row(second_number)
-            second_col = get_number_column(second_number)
+            second_row = number_row(second_number)
+            second_col = number_column(second_number)
 
             return (
                 abs(first_row - second_row) <= 1
@@ -893,8 +987,8 @@ class Command(BaseCommand):
 
             for index in ranked_indices:
                 number = int(numbers[index])
-                row = get_number_row(number)
-                column = get_number_column(number)
+                row = number_row(number)
+                column = number_column(number)
 
                 if row_counts.get(row, 0) >= max_per_row:
                     continue
@@ -946,8 +1040,8 @@ class Command(BaseCommand):
 
             for index in selected_indices:
                 number = int(numbers[index])
-                row = get_number_row(number)
-                column = get_number_column(number)
+                row = number_row(number)
+                column = number_column(number)
 
                 row_counts[row] = row_counts.get(row, 0) + 1
                 column_counts[column] = column_counts.get(column, 0) + 1
@@ -957,8 +1051,8 @@ class Command(BaseCommand):
                     continue
 
                 number = int(numbers[index])
-                row = get_number_row(number)
-                column = get_number_column(number)
+                row = number_row(number)
+                column = number_column(number)
 
                 if row_counts.get(row, 0) >= 2:
                     continue
@@ -1011,6 +1105,95 @@ class Command(BaseCommand):
                 for draw_index, positions in groups.items()
             }
 
+        def calculate_single_draw_hits(selected_numbers, draw_numbers):
+            return len(set(selected_numbers).intersection(draw_numbers))
+
+        def calculate_payout_for_hits(hit_count):
+            return float(payout_table.get(hit_count, 0)) * stake
+
+        def calculate_pick_profit(selected_numbers, current_index):
+            total_cost = 0.0
+            total_return = 0.0
+            hit_distribution = defaultdict(int)
+            bonus_hit_distribution = defaultdict(int)
+
+            start_index = current_index + 1
+            end_index = min(current_index + horizon + 1, len(draws))
+
+            selected_set = set(selected_numbers)
+
+            for future_index in range(start_index, end_index):
+                future_numbers = list(draws[future_index].numbers)
+                future_numbers_set = set(future_numbers)
+
+                bonus_number = future_numbers[-1] if future_numbers else None
+
+                hit_count = len(selected_set.intersection(future_numbers_set))
+                bonus_hit = bonus_number in selected_set
+
+                if payout_table_name == "bonus":
+                    if bonus_hit:
+                        payout = calculate_payout_for_hits(hit_count)
+                    else:
+                        payout = 0.0
+                else:
+                    payout = calculate_payout_for_hits(hit_count)
+
+                total_cost += stake
+                total_return += payout
+                hit_distribution[hit_count] += 1
+                bonus_hit_distribution[str(bonus_hit)] += 1
+
+            profit = total_return - total_cost
+            roi = (profit / total_cost) * 100 if total_cost > 0 else 0.0
+
+            return {
+                "rounds_played": end_index - start_index,
+                "cost": total_cost,
+                "return": total_return,
+                "profit": profit,
+                "roi": roi,
+                "hit_distribution": dict(hit_distribution),
+                "bonus_hit_distribution": dict(bonus_hit_distribution),
+            }
+        def summarize_profit(results):
+            total_rounds = sum(item["rounds_played"] for item in results)
+            total_cost = sum(item["cost"] for item in results)
+            total_return = sum(item["return"] for item in results)
+            total_profit = total_return - total_cost
+            roi = (total_profit / total_cost) * 100 if total_cost > 0 else 0.0
+
+            hit_distribution = defaultdict(int)
+
+            for item in results:
+                for hits, count in item["hit_distribution"].items():
+                    hit_distribution[int(hits)] += count
+            bonus_hit_distribution = defaultdict(int)
+
+            for item in results:
+                for value, count in item.get("bonus_hit_distribution", {}).items():
+                    bonus_hit_distribution[value] += count
+            profitable_decisions = sum(1 for item in results if item["profit"] > 0)
+            losing_decisions = sum(1 for item in results if item["profit"] < 0)
+            break_even_decisions = sum(1 for item in results if item["profit"] == 0)
+
+            return {
+                "stake_per_round": round(stake, 2),
+                "rounds_per_combo": horizon,
+                "cost_per_combo_decision": round(stake * horizon, 2),
+                "total_combo_decisions": len(results),
+                "total_rounds_played": total_rounds,
+                "total_cost": round(total_cost, 2),
+                "total_return": round(total_return, 2),
+                "total_profit": round(total_profit, 2),
+                "roi": round(roi, 4),
+                "profitable_decisions": profitable_decisions,
+                "losing_decisions": losing_decisions,
+                "break_even_decisions": break_even_decisions,
+                "hit_distribution": dict(sorted(hit_distribution.items())),
+                "bonus_hit_distribution": dict(bonus_hit_distribution),
+            }
+
         train_groups = build_groups(train_draw_indices)
         test_groups = build_groups(test_draw_indices)
 
@@ -1032,19 +1215,14 @@ class Command(BaseCommand):
         log_done("Probabilities ready")
 
         # ------------------------------------------------------------
-        # Learn best mode per regime using TRAIN ONLY
+        # Learn best mode per regime from training only
         # ------------------------------------------------------------
 
         log_step("Learning best pick mode per regime from training period...")
 
         train_mode_hits_by_regime = defaultdict(lambda: defaultdict(list))
 
-        for counter, (draw_index, positions) in enumerate(train_groups.items(), start=1):
-            if counter % 500 == 0:
-                self.stdout.write(
-                    f"  analyzed train pick modes for {counter:,}/{len(train_groups):,} decisions..."
-                )
-
+        for draw_index, positions in train_groups.items():
             regime = decision_regime_by_index.get(draw_index, "normal_pattern")
 
             draw_probs = train_probabilities[positions]
@@ -1065,11 +1243,7 @@ class Command(BaseCommand):
 
             for mode in ["raw", "spread", "hybrid"]:
                 values = train_mode_hits_by_regime[regime][mode]
-
-                if values:
-                    mode_averages[mode] = float(np.mean(values))
-                else:
-                    mode_averages[mode] = 0.0
+                mode_averages[mode] = float(np.mean(values)) if values else 0.0
 
             best_mode_for_regime = max(mode_averages, key=mode_averages.get)
 
@@ -1083,16 +1257,11 @@ class Command(BaseCommand):
 
         log_done("Regime mode map learned")
 
-        self.stdout.write("")
-        self.stdout.write("Regime mode map:")
-        for regime, mode in regime_mode_map.items():
-            self.stdout.write(f"{regime}: {mode} | {regime_train_summary[regime]}")
-
         # ------------------------------------------------------------
-        # Test pick modes
+        # Test modes
         # ------------------------------------------------------------
 
-        log_step("Testing raw/spread/hybrid/regime-aware pick modes...")
+        log_step("Testing raw/spread/hybrid/regime-aware pick modes with ROI...")
 
         raw_pick_total_hits = []
         spread_pick_total_hits = []
@@ -1100,10 +1269,15 @@ class Command(BaseCommand):
         regime_pick_total_hits = []
         random_pick_total_hits = []
 
+        raw_profit_results = []
+        spread_profit_results = []
+        hybrid_profit_results = []
+        regime_profit_results = []
+        random_profit_results = []
+
         regime_test_summary = defaultdict(lambda: defaultdict(list))
 
         rng = np.random.default_rng(seed=42)
-
         unique_test_draw_indices = sorted(test_groups.keys())
 
         for counter, draw_index in enumerate(unique_test_draw_indices, start=1):
@@ -1132,29 +1306,40 @@ class Command(BaseCommand):
                 pick,
             )
 
-            raw_hits = int(draw_future_counts[raw_indices].sum())
-            spread_hits = int(draw_future_counts[spread_indices].sum())
-            hybrid_hits = int(draw_future_counts[hybrid_indices].sum())
-            regime_hits = int(draw_future_counts[regime_indices].sum())
-
-            raw_pick_total_hits.append(raw_hits)
-            spread_pick_total_hits.append(spread_hits)
-            hybrid_pick_total_hits.append(hybrid_hits)
-            regime_pick_total_hits.append(regime_hits)
-
-            regime_test_summary[regime]["regime_aware"].append(regime_hits)
-            regime_test_summary[regime]["raw"].append(raw_hits)
-            regime_test_summary[regime]["spread"].append(spread_hits)
-            regime_test_summary[regime]["hybrid"].append(hybrid_hits)
-
             random_indices = rng.choice(
                 len(draw_features),
                 size=pick,
                 replace=False,
             )
 
+            raw_selected_numbers = [int(numbers[index]) for index in raw_indices]
+            spread_selected_numbers = [int(numbers[index]) for index in spread_indices]
+            hybrid_selected_numbers = [int(numbers[index]) for index in hybrid_indices]
+            regime_selected_numbers = [int(numbers[index]) for index in regime_indices]
+            random_selected_numbers = [int(numbers[index]) for index in random_indices]
+
+            raw_hits = int(draw_future_counts[raw_indices].sum())
+            spread_hits = int(draw_future_counts[spread_indices].sum())
+            hybrid_hits = int(draw_future_counts[hybrid_indices].sum())
+            regime_hits = int(draw_future_counts[regime_indices].sum())
             random_hits = int(draw_future_counts[random_indices].sum())
+
+            raw_pick_total_hits.append(raw_hits)
+            spread_pick_total_hits.append(spread_hits)
+            hybrid_pick_total_hits.append(hybrid_hits)
+            regime_pick_total_hits.append(regime_hits)
             random_pick_total_hits.append(random_hits)
+
+            raw_profit_results.append(calculate_pick_profit(raw_selected_numbers, draw_index))
+            spread_profit_results.append(calculate_pick_profit(spread_selected_numbers, draw_index))
+            hybrid_profit_results.append(calculate_pick_profit(hybrid_selected_numbers, draw_index))
+            regime_profit_results.append(calculate_pick_profit(regime_selected_numbers, draw_index))
+            random_profit_results.append(calculate_pick_profit(random_selected_numbers, draw_index))
+
+            regime_test_summary[regime]["regime_aware"].append(regime_hits)
+            regime_test_summary[regime]["raw"].append(raw_hits)
+            regime_test_summary[regime]["spread"].append(spread_hits)
+            regime_test_summary[regime]["hybrid"].append(hybrid_hits)
 
         raw_pick_hits = float(np.mean(raw_pick_total_hits))
         spread_pick_hits = float(np.mean(spread_pick_total_hits))
@@ -1170,6 +1355,12 @@ class Command(BaseCommand):
         regime_lift = regime_pick_hits - theoretical_baseline
         random_lift = random_pick_hits - theoretical_baseline
 
+        raw_profit_summary = summarize_profit(raw_profit_results)
+        spread_profit_summary = summarize_profit(spread_profit_results)
+        hybrid_profit_summary = summarize_profit(hybrid_profit_results)
+        regime_profit_summary = summarize_profit(regime_profit_results)
+        random_profit_summary = summarize_profit(random_profit_results)
+
         mode_scores = {
             "raw": raw_pick_hits,
             "spread": spread_pick_hits,
@@ -1181,6 +1372,13 @@ class Command(BaseCommand):
         model_pick_hits = mode_scores[best_mode]
         lift = model_pick_hits - theoretical_baseline
 
+        selected_history = {
+            "raw": raw_pick_total_hits[-200:],
+            "spread": spread_pick_total_hits[-200:],
+            "hybrid": hybrid_pick_total_hits[-200:],
+            "regime_aware": regime_pick_total_hits[-200:],
+        }[best_mode]
+
         regime_test_output = {}
 
         for regime in ["spread_low", "light_pattern", "normal_pattern", "heavy_pattern"]:
@@ -1188,21 +1386,21 @@ class Command(BaseCommand):
 
             for mode in ["raw", "spread", "hybrid", "regime_aware"]:
                 values = regime_test_summary[regime][mode]
-
-                if values:
-                    regime_test_output[regime][mode] = round(float(np.mean(values)), 4)
-                else:
-                    regime_test_output[regime][mode] = None
+                regime_test_output[regime][mode] = (
+                    round(float(np.mean(values)), 4)
+                    if values
+                    else None
+                )
 
             regime_test_output[regime]["selected_mode"] = regime_mode_map.get(regime)
 
-        log_done("Pick mode testing complete")
+        log_done("Testing complete")
 
         # ------------------------------------------------------------
         # Baseline target probability
         # ------------------------------------------------------------
 
-        baseline_target_probability = 0
+        baseline_target_probability = 0.0
 
         for hits in range(target_hits, horizon + 1):
             baseline_target_probability += (
@@ -1215,14 +1413,14 @@ class Command(BaseCommand):
         # Score latest draw
         # ------------------------------------------------------------
 
-        log_step("Scoring latest draw with operation-aware regime mode...")
+        log_step("Scoring latest draw...")
 
         latest_index = len(draws) - 1
         latest_numbers = draw_sets[latest_index]
         previous_numbers = draw_sets[latest_index - 1]
+        latest_operation_features = operation_features(latest_index)
 
         latest_features = []
-        latest_operation_features = operation_features(latest_index)
 
         for number in range(1, 81):
             row = number_row(number)
@@ -1271,24 +1469,9 @@ class Command(BaseCommand):
         latest_regime = classify_regime(latest_regime_score)
         latest_selected_mode = regime_mode_map.get(latest_regime, "hybrid")
 
-        latest_raw_indices = select_raw_pick(
-            latest_probabilities,
-            latest_numbers_array,
-            pick,
-        )
-
-        latest_spread_indices = select_spread_pick(
-            latest_probabilities,
-            latest_numbers_array,
-            pick,
-        )
-
-        latest_hybrid_indices = select_hybrid_pick(
-            latest_probabilities,
-            latest_numbers_array,
-            pick,
-        )
-
+        latest_raw_indices = select_raw_pick(latest_probabilities, latest_numbers_array, pick)
+        latest_spread_indices = select_spread_pick(latest_probabilities, latest_numbers_array, pick)
+        latest_hybrid_indices = select_hybrid_pick(latest_probabilities, latest_numbers_array, pick)
         latest_regime_indices = select_mode_indices(
             latest_selected_mode,
             latest_probabilities,
@@ -1366,45 +1549,13 @@ class Command(BaseCommand):
         )
 
         # ------------------------------------------------------------
-        # Block history
-        # ------------------------------------------------------------
-
-        block_size = 250
-        test_blocks = []
-
-        for start in range(0, len(regime_pick_total_hits), block_size):
-            block = regime_pick_total_hits[start:start + block_size]
-
-            if not block:
-                continue
-
-            block_average = float(np.mean(block))
-
-            test_blocks.append(
-                {
-                    "start": start,
-                    "end": start + len(block) - 1,
-                    "decisions": len(block),
-                    "average_hits": round(block_average, 4),
-                    "lift": round(block_average - theoretical_baseline, 4),
-                }
-            )
-
-        # ------------------------------------------------------------
         # Save result
         # ------------------------------------------------------------
 
         log_step("Saving AI result...")
 
-        selected_history = {
-            "raw": raw_pick_total_hits[-200:],
-            "spread": spread_pick_total_hits[-200:],
-            "hybrid": hybrid_pick_total_hits[-200:],
-            "regime_aware": regime_pick_total_hits[-200:],
-        }[best_mode]
-
         result = KinoAIResult.objects.create(
-            model_name="number_ai_10game_v4_operation_aware",
+            model_name="number_ai_10game_v5_roi",
             train_draws=len(set(train_draw_indices.tolist())),
             test_draws=len(unique_test_draw_indices),
             baseline_top20_hits=theoretical_baseline,
@@ -1415,19 +1566,22 @@ class Command(BaseCommand):
             recall=recall,
             data={
                 "pick": pick,
-                "mode": "10_game_window",
-                "feature_version": "v4_operation_intensity_vectors",
+                "mode": "window_profit_backtest",
+                "feature_version": "v5_operation_vectors_profit_roi",
                 "extra_features_enabled": True,
                 "regime_aware_enabled": True,
                 "operation_vectors_enabled": True,
+                "profit_backtest_enabled": True,
 
                 "horizon": horizon,
                 "decision_step": decision_step,
                 "target_hits": target_hits,
-                "baseline_target_probability": round(
-                    baseline_target_probability,
-                    6,
-                ),
+                "baseline_target_probability": round(baseline_target_probability, 6),
+
+                "stake": stake,
+                "payout_table": payout_table_name,
+                "payout_table_values": payout_table,
+                "cost_per_combo_decision": round(stake * horizon, 2),
 
                 "latest_draw_id": draw_ids[-1],
                 "split_draw_id": draw_ids[split_draw_index],
@@ -1469,6 +1623,12 @@ class Command(BaseCommand):
                 "regime_lift": regime_lift,
                 "random_lift": random_lift,
 
+                "raw_profit_summary": raw_profit_summary,
+                "spread_profit_summary": spread_profit_summary,
+                "hybrid_profit_summary": hybrid_profit_summary,
+                "regime_profit_summary": regime_profit_summary,
+                "random_profit_summary": random_profit_summary,
+
                 "raw_pick_hits_by_test_decision": raw_pick_total_hits[-200:],
                 "spread_pick_hits_by_test_decision": spread_pick_total_hits[-200:],
                 "hybrid_pick_hits_by_test_decision": hybrid_pick_total_hits[-200:],
@@ -1476,12 +1636,9 @@ class Command(BaseCommand):
                 "random_pick_hits_by_test_decision": random_pick_total_hits[-200:],
 
                 "model_pick_hits_by_test_decision": selected_history,
-
                 "model_top20_hits_by_test_decision": selected_history,
                 "random_top20_hits_by_test_decision": random_pick_total_hits[-200:],
                 "random_top20_average_hits": random_pick_hits,
-
-                "test_blocks": test_blocks,
 
                 "latest_scores": latest_scores,
                 "top_pick_latest_scores": latest_regime_scores,
@@ -1504,7 +1661,7 @@ class Command(BaseCommand):
         # ------------------------------------------------------------
 
         self.stdout.write("")
-        self.stdout.write(self.style.SUCCESS("KINO 10-game AI V4 training finished."))
+        self.stdout.write(self.style.SUCCESS("KINO AI ROI training finished."))
         self.stdout.write(f"AI Result ID: {result.id}")
         self.stdout.write(f"Train decision points: {result.train_draws}")
         self.stdout.write(f"Test decision points: {result.test_draws}")
@@ -1513,28 +1670,43 @@ class Command(BaseCommand):
         self.stdout.write(f"Recall: {recall:.4f}")
 
         self.stdout.write("")
-        self.stdout.write("Main 10-game test metric:")
-        self.stdout.write(
-            f"Theoretical random top {pick} hits: {theoretical_baseline:.3f}"
-        )
-        self.stdout.write(
-            f"Simulated random top {pick} hits: {random_pick_hits:.3f}"
-        )
+        self.stdout.write("Hit-count metric:")
+        self.stdout.write(f"Theoretical random top {pick} hits: {theoretical_baseline:.3f}")
+        self.stdout.write(f"Simulated random top {pick} hits: {random_pick_hits:.3f}")
         self.stdout.write("")
         self.stdout.write(f"Raw AI top {pick} hits: {raw_pick_hits:.3f} ({raw_lift:+.3f})")
         self.stdout.write(f"Spread AI top {pick} hits: {spread_pick_hits:.3f} ({spread_lift:+.3f})")
         self.stdout.write(f"Hybrid AI top {pick} hits: {hybrid_pick_hits:.3f} ({hybrid_lift:+.3f})")
         self.stdout.write(f"Regime-aware top {pick} hits: {regime_pick_hits:.3f} ({regime_lift:+.3f})")
         self.stdout.write("")
-        self.stdout.write(f"Best overall mode: {best_mode}")
-        self.stdout.write(
-            f"Best mode lift vs simulated random: {model_pick_hits - random_pick_hits:+.3f}"
-        )
+        self.stdout.write(f"Best overall hit-count mode: {best_mode}")
 
         self.stdout.write("")
-        self.stdout.write("Regime test summary:")
-        for regime, values in regime_test_output.items():
-            self.stdout.write(f"{regime}: {values}")
+        self.stdout.write("Profit / ROI metric:")
+        self.stdout.write(f"Payout table: {payout_table_name}")
+        self.stdout.write(f"Stake per combo per round: €{stake:.2f}")
+        self.stdout.write(f"Rounds per combo decision: {horizon}")
+        self.stdout.write(f"Cost per combo decision: €{stake * horizon:.2f}")
+
+        for name, summary in [
+            ("Raw", raw_profit_summary),
+            ("Spread", spread_profit_summary),
+            ("Hybrid", hybrid_profit_summary),
+            ("Regime-aware", regime_profit_summary),
+            ("Random", random_profit_summary),
+        ]:
+            self.stdout.write("")
+            self.stdout.write(f"{name}:")
+            self.stdout.write(f"  Total combo decisions: {summary['total_combo_decisions']}")
+            self.stdout.write(f"  Total rounds played: {summary['total_rounds_played']}")
+            self.stdout.write(f"  Cost: €{summary['total_cost']:.2f}")
+            self.stdout.write(f"  Return: €{summary['total_return']:.2f}")
+            self.stdout.write(f"  Profit: €{summary['total_profit']:.2f}")
+            self.stdout.write(f"  ROI: {summary['roi']:+.4f}%")
+            self.stdout.write(f"  Profitable decisions: {summary['profitable_decisions']}")
+            self.stdout.write(f"  Losing decisions: {summary['losing_decisions']}")
+            self.stdout.write(f"  Break-even decisions: {summary['break_even_decisions']}")
+            self.stdout.write(f"  Hit distribution: {summary['hit_distribution']}")
 
         self.stdout.write("")
         self.stdout.write(
@@ -1549,7 +1721,7 @@ class Command(BaseCommand):
         )
 
         self.stdout.write("")
-        self.stdout.write(f"Top {pick} latest operation-aware picks:")
+        self.stdout.write(f"Top {pick} latest regime-aware picks:")
         for item in latest_regime_scores:
             self.stdout.write(
                 f"#{item['rank']:02d} Number {item['number']:02d} | "

@@ -21,7 +21,7 @@ from kino.models import (
 
 
 class Command(BaseCommand):
-    help = "Train operation-aware KINO AI model with profit/ROI backtesting"
+    help = "Train operation-aware KINO AI with ROI, confidence, components, and skip logic"
 
     def add_arguments(self, parser):
         parser.add_argument("--horizon", type=int, default=10)
@@ -46,6 +46,26 @@ class Command(BaseCommand):
             help="Use normal KINO or KINO BONUS 12-number payout table.",
         )
 
+        parser.add_argument(
+            "--confidence-play-threshold",
+            type=float,
+            default=70.0,
+            help="Confidence score threshold for PLAY decision.",
+        )
+
+        parser.add_argument(
+            "--confidence-watch-threshold",
+            type=float,
+            default=55.0,
+            help="Confidence score threshold for WATCH decision.",
+        )
+        parser.add_argument(
+            "--bonus-fee",
+            type=float,
+            default=1.0,
+            help="Extra KINO BONUS charge per round. Example: 1 means €1 extra per round.",
+        )
+
     def handle(self, *args, **options):
         horizon = options["horizon"]
         decision_step = options["decision_step"]
@@ -55,14 +75,18 @@ class Command(BaseCommand):
         pick = options["pick"]
         stake = options["stake"]
         payout_table_name = options["payout_table"]
-
+        confidence_play_threshold = options["confidence_play_threshold"]
+        confidence_watch_threshold = options["confidence_watch_threshold"]
+        bonus_fee = options["bonus_fee"]
         if pick != 12:
-            self.stdout.write(
-                self.style.WARNING(
-                    "This profit backtest currently uses the 12-number KINO payout table. "
-                    "For payout accuracy, use --pick 12."
-                )
+            raise ValueError(
+                "This version only supports verified 12-number payout tables. "
+                "Run with --pick 12."
             )
+
+        # ------------------------------------------------------------
+        # Payout tables
+        # ------------------------------------------------------------
 
         KINO_12_PAYOUTS = {
             12: 1_000_000,
@@ -95,76 +119,17 @@ class Command(BaseCommand):
             1: 2,
             0: 0,
         }
-        KINO_8_PAYOUT = {
-            8: 15_000,
-            7: 1_000,
-            6: 50,
-            5: 5,
-            4: 2,
-            3: 0,
-            2: 0,
-            1: 0,
-            0: 0,
-        }
-        KINO_BONUS_8_PAYOUT = {
-            8: 40_000,
-            7: 3_000,
-            6: 200,
-            5: 30,
-            4: 7,
-            3: 3,
-            2: 2,
-            1: 1,
-            0: 0,
-        }
-        KINO_7_PAYOUT = {
-            7: 5_000,
-            6: 100,
-            5: 20,
-            4: 3,
-            3: 1,
-            2: 0,
-            1: 0,
-            0: 0,
-        }
-        KINO_BONUS_7_PAYOUT = {
-            7: 15_000,
-            6: 400,
-            5: 80,
-            4: 13,
-            3: 8,
-            2: 3,
-            1: 2,
-            0: 0,
-        }
 
-        def get_payout_table(pick_size, payout_table_name):
-            if pick_size == 12:
-                if payout_table_name == "kino":
-                    return KINO_12_PAYOUTS
-                elif payout_table_name == "bonus":
-                    return KINO_BONUS_12_PAYOUTS
+        if payout_table_name == "kino":
+            payout_table = KINO_12_PAYOUTS
+        elif payout_table_name == "bonus":
+            payout_table = KINO_BONUS_12_PAYOUTS
+        else:
+            raise ValueError(f"Unknown payout table: {payout_table_name}")
 
-            elif pick_size == 8:
-                if payout_table_name == "kino":
-                    return KINO_8_PAYOUT
-                elif payout_table_name == "bonus":
-                    return KINO_BONUS_8_PAYOUT
-            elif pick_size == 7:
-                if payout_table_name == "kino":
-                    return KINO_7_PAYOUT
-                elif payout_table_name == "bonus":
-                    return KINO_BONUS_7_PAYOUT
-            raise ValueError(
-                f"No payout table configured for pick={pick_size}, "
-                f"payout_table={payout_table_name}"
-            )
-
-
-        payout_table = get_payout_table(
-            pick_size=pick,
-            payout_table_name=payout_table_name,
-        )
+        # ------------------------------------------------------------
+        # Logging helpers
+        # ------------------------------------------------------------
 
         def log_step(message):
             self.stdout.write("")
@@ -172,6 +137,10 @@ class Command(BaseCommand):
 
         def log_done(message):
             self.stdout.write(self.style.SUCCESS(f"✓ {message}"))
+
+        # ------------------------------------------------------------
+        # Board helpers
+        # ------------------------------------------------------------
 
         def number_row(number):
             return (number - 1) // 10 + 1
@@ -237,21 +206,6 @@ class Command(BaseCommand):
             )
             return
 
-        log_done(f"Loaded {len(draws):,} draws")
-
-        self.stdout.write("")
-        self.stdout.write(self.style.WARNING("Training KINO AI with ROI backtest..."))
-        self.stdout.write(f"Total draws: {len(draws):,}")
-        self.stdout.write(f"Horizon: next {horizon} games")
-        self.stdout.write(f"Decision step: every {decision_step} games")
-        self.stdout.write(f"Pick size: top {pick} numbers")
-        self.stdout.write(f"Stake per combo per round: €{stake:.2f}")
-        self.stdout.write(f"Cost per decision: €{stake * horizon:.2f}")
-        self.stdout.write(f"Payout table: {payout_table_name}")
-        self.stdout.write(
-            f"Target: number hits at least {target_hits} times inside next {horizon} games"
-        )
-
         draw_sets = [set(draw.numbers) for draw in draws]
         draw_ids = [draw.draw_id for draw in draws]
 
@@ -260,8 +214,23 @@ class Command(BaseCommand):
             for index, draw in enumerate(draws)
         }
 
+        log_done(f"Loaded {len(draws):,} draws")
+
+        self.stdout.write("")
+        self.stdout.write(self.style.WARNING("Training KINO AI confidence system..."))
+        self.stdout.write(f"Total draws: {len(draws):,}")
+        self.stdout.write(f"Horizon: next {horizon} games")
+        self.stdout.write(f"Decision step: every {decision_step} games")
+        self.stdout.write(f"Pick size: {pick} numbers")
+        self.stdout.write(f"Stake per combo per round: €{stake:.2f}")
+        self.stdout.write(f"Cost per combo decision: €{stake * horizon:.2f}")
+        self.stdout.write(f"Payout table: {payout_table_name}")
+        self.stdout.write(
+            f"Target: number hits at least {target_hits} times inside next {horizon} games"
+        )
+
         # ------------------------------------------------------------
-        # Prefix counts
+        # Basic prefix counts
         # ------------------------------------------------------------
 
         log_step("Building number prefix counts...")
@@ -306,7 +275,7 @@ class Command(BaseCommand):
             return float(prefix[end_index] - prefix[start_index])
 
         # ------------------------------------------------------------
-        # Board pattern cache
+        # Stored board pattern cache
         # ------------------------------------------------------------
 
         log_step("Loading board pattern events...")
@@ -334,6 +303,7 @@ class Command(BaseCommand):
 
             if event.pattern_type == "row":
                 board_row_events[draw_index][event.group_number] += 1
+
             elif event.pattern_type == "column":
                 board_column_events[draw_index][event.group_number] += 1
 
@@ -343,7 +313,7 @@ class Command(BaseCommand):
         log_done(f"Board pattern events loaded: {board_event_count:,}")
 
         # ------------------------------------------------------------
-        # Shape cache
+        # Stored shape cache
         # ------------------------------------------------------------
 
         log_step("Loading shape events...")
@@ -380,7 +350,7 @@ class Command(BaseCommand):
         log_done(f"Shape events loaded: {shape_event_count:,}")
 
         # ------------------------------------------------------------
-        # Movement cache
+        # Stored movement cache
         # ------------------------------------------------------------
 
         log_step("Loading shape movements...")
@@ -440,7 +410,7 @@ class Command(BaseCommand):
         log_done("Prefix matrices ready")
 
         # ------------------------------------------------------------
-        # Operation vectors
+        # Operation/intensity vectors per draw
         # ------------------------------------------------------------
 
         log_step("Building operation/intensity vectors...")
@@ -699,6 +669,99 @@ class Command(BaseCommand):
                 + scatter_pressure
             )
 
+        def component_features_for_number(current_index, number):
+            row = number_row(number)
+            column = number_column(number)
+
+            return {
+                "hot_last_10": int(count_in_window(current_index, number, 10)),
+                "hot_last_20": int(count_in_window(current_index, number, 20)),
+                "hot_last_50": int(count_in_window(current_index, number, 50)),
+                "gap": int(gap_since_seen(current_index, number)),
+
+                "row_pattern_last_10": recent_from_prefix(board_row_events_prefix, current_index, row, 10),
+                "column_pattern_last_10": recent_from_prefix(board_column_events_prefix, current_index, column, 10),
+                "board_hit_last_10": recent_from_prefix(board_number_hits_prefix, current_index, number, 10),
+
+                "shape_hit_last_10": recent_from_prefix(shape_number_hits_prefix, current_index, number, 10),
+                "shape_area_last_10": recent_from_prefix(shape_number_area_prefix, current_index, number, 10),
+                "shape_center_last_20": recent_from_prefix(shape_centers_prefix, current_index, number, 20),
+
+                "movement_target_last_20": recent_from_prefix(movement_target_centers_prefix, current_index, number, 20),
+                "movement_source_last_20": recent_from_prefix(
+                    movement_source_centers_completed_prefix,
+                    current_index,
+                    number,
+                    20,
+                ),
+            }
+
+        def explain_number_components(current_index, number, probability, baseline_probability):
+            features = component_features_for_number(current_index, number)
+            components = []
+            reasons = []
+
+            if features["shape_area_last_10"] > 0 or features["shape_hit_last_10"] > 0:
+                components.append("shape")
+                reasons.append(
+                    f"shape area/hit active "
+                    f"({features['shape_area_last_10']}/{features['shape_hit_last_10']})"
+                )
+
+            if features["shape_center_last_20"] > 0:
+                components.append("shape_center")
+                reasons.append(f"recent shape center x{features['shape_center_last_20']}")
+
+            if features["movement_target_last_20"] > 0:
+                components.append("movement_target")
+                reasons.append(f"movement target x{features['movement_target_last_20']}")
+
+            if features["movement_source_last_20"] > 0:
+                components.append("movement_source")
+                reasons.append(f"movement source x{features['movement_source_last_20']}")
+
+            if (
+                features["row_pattern_last_10"] > 0
+                or features["column_pattern_last_10"] > 0
+                or features["board_hit_last_10"] > 0
+            ):
+                components.append("board_pattern")
+                reasons.append(
+                    f"row/column/board pressure "
+                    f"({features['row_pattern_last_10']}/"
+                    f"{features['column_pattern_last_10']}/"
+                    f"{features['board_hit_last_10']})"
+                )
+
+            if probability > baseline_probability * 1.20:
+                components.append("high_confidence_probability")
+                reasons.append("probability well above baseline")
+
+            if features["hot_last_10"] >= 4:
+                components.append("hot")
+                reasons.append(f"hot last 10: {features['hot_last_10']}")
+
+            if features["gap"] >= 15:
+                components.append("cold_gap")
+                reasons.append(f"gap since seen: {features['gap']}")
+
+            if not components:
+                components.append("filler")
+                reasons.append("no strong component detected")
+
+            return {
+                "number": int(number),
+                "components": components,
+                "reasons": reasons,
+                "features": features,
+                "probability": round(float(probability), 6),
+                "probability_percent": round(float(probability) * 100, 4),
+            }
+
+        # ------------------------------------------------------------
+        # Feature names
+        # ------------------------------------------------------------
+
         feature_names = [
             "number",
             "row",
@@ -770,7 +833,20 @@ class Command(BaseCommand):
         ]
 
         # ------------------------------------------------------------
-        # Decision points / regimes
+        # Baseline target probability
+        # ------------------------------------------------------------
+
+        baseline_target_probability = 0.0
+
+        for hits in range(target_hits, horizon + 1):
+            baseline_target_probability += (
+                comb(horizon, hits)
+                * (0.25 ** hits)
+                * (0.75 ** (horizon - hits))
+            )
+
+        # ------------------------------------------------------------
+        # Decision points and regimes
         # ------------------------------------------------------------
 
         decision_indices = list(
@@ -971,6 +1047,10 @@ class Command(BaseCommand):
             ranked_indices = np.argsort(draw_probs)[::-1]
             return ranked_indices[:pick_size]
 
+        def select_low_pick(draw_probs, numbers, pick_size):
+            ranked_indices = np.argsort(draw_probs)
+            return ranked_indices[:pick_size]
+
         def select_spread_pick(
             draw_probs,
             numbers,
@@ -1092,6 +1172,9 @@ class Command(BaseCommand):
             if mode == "hybrid":
                 return select_hybrid_pick(draw_probs, numbers, pick_size)
 
+            if mode == "miss":
+                return select_low_pick(draw_probs, numbers, pick_size)
+
             return select_hybrid_pick(draw_probs, numbers, pick_size)
 
         def build_groups(draw_indices):
@@ -1105,22 +1188,32 @@ class Command(BaseCommand):
                 for draw_index, positions in groups.items()
             }
 
-        def calculate_single_draw_hits(selected_numbers, draw_numbers):
-            return len(set(selected_numbers).intersection(draw_numbers))
+        # ------------------------------------------------------------
+        # Profit and component audit helpers
+        # ------------------------------------------------------------
+        normal_payout_table = KINO_12_PAYOUTS
+        bonus_payout_table = KINO_BONUS_12_PAYOUTS
 
-        def calculate_payout_for_hits(hit_count):
-            return float(payout_table.get(hit_count, 0)) * stake
 
-        def calculate_pick_profit(selected_numbers, current_index):
+        def calculate_normal_payout_for_hits(hit_count):
+            return float(normal_payout_table.get(hit_count, 0)) * stake
+
+
+        def calculate_bonus_payout_for_hits(hit_count):
+            return float(bonus_payout_table.get(hit_count, 0)) * stake
+
+        def calculate_pick_profit(selected_numbers, current_index, component_map=None):
             total_cost = 0.0
             total_return = 0.0
             hit_distribution = defaultdict(int)
             bonus_hit_distribution = defaultdict(int)
+            component_hit_distribution = defaultdict(lambda: defaultdict(int))
+            round_details = []
+            payout_source_distribution = defaultdict(int)
+            selected_set = set(selected_numbers)
 
             start_index = current_index + 1
             end_index = min(current_index + horizon + 1, len(draws))
-
-            selected_set = set(selected_numbers)
 
             for future_index in range(start_index, end_index):
                 future_numbers = list(draws[future_index].numbers)
@@ -1128,21 +1221,58 @@ class Command(BaseCommand):
 
                 bonus_number = future_numbers[-1] if future_numbers else None
 
-                hit_count = len(selected_set.intersection(future_numbers_set))
+                hit_numbers = sorted(selected_set.intersection(future_numbers_set))
+                hit_count = len(hit_numbers)
                 bonus_hit = bonus_number in selected_set
 
-                if payout_table_name == "bonus":
-                    if bonus_hit:
-                        payout = calculate_payout_for_hits(hit_count)
-                    else:
-                        payout = 0.0
-                else:
-                    payout = calculate_payout_for_hits(hit_count)
+                if payout_table_name == "kino":
+                    payout = calculate_normal_payout_for_hits(hit_count)
+                    payout_source = "kino"
 
-                total_cost += stake
+                elif payout_table_name == "bonus":
+                    if bonus_hit:
+                        payout = calculate_bonus_payout_for_hits(hit_count)
+                        payout_source = "bonus"
+                    else:
+                        payout = calculate_normal_payout_for_hits(hit_count)
+                        payout_source = "kino_fallback"
+
+                else:
+                    raise ValueError(f"Unknown payout table: {payout_table_name}")
+
+                if payout_table_name == "bonus":
+                    round_cost = stake + bonus_fee
+                else:
+                    round_cost = stake
+
+                total_cost += round_cost
                 total_return += payout
                 hit_distribution[hit_count] += 1
                 bonus_hit_distribution[str(bonus_hit)] += 1
+                payout_source_distribution[payout_source] += 1
+
+                if component_map:
+                    for number in selected_numbers:
+                        number_components = component_map.get(number, ["filler"])
+                        did_hit = number in future_numbers_set
+
+                        for component in number_components:
+                            if did_hit:
+                                component_hit_distribution[component]["hits"] += 1
+                            else:
+                                component_hit_distribution[component]["misses"] += 1
+
+                round_details.append(
+                    {
+                        "future_draw_id": draws[future_index].draw_id,
+                        "hit_count": hit_count,
+                        "hit_numbers": hit_numbers,
+                        "bonus_number": bonus_number,
+                        "bonus_hit": bonus_hit,
+                        "payout": payout,
+                        "payout_source": payout_source,
+                    }
+                )
 
             profit = total_return - total_cost
             roi = (profit / total_cost) * 100 if total_cost > 0 else 0.0
@@ -1155,7 +1285,14 @@ class Command(BaseCommand):
                 "roi": roi,
                 "hit_distribution": dict(hit_distribution),
                 "bonus_hit_distribution": dict(bonus_hit_distribution),
+                "component_hit_distribution": {
+                    component: dict(values)
+                    for component, values in component_hit_distribution.items()
+                },
+                "round_details": round_details,
+                "payout_source_distribution": dict(payout_source_distribution),
             }
+
         def summarize_profit(results):
             total_rounds = sum(item["rounds_played"] for item in results)
             total_cost = sum(item["cost"] for item in results)
@@ -1164,18 +1301,70 @@ class Command(BaseCommand):
             roi = (total_profit / total_cost) * 100 if total_cost > 0 else 0.0
 
             hit_distribution = defaultdict(int)
+            bonus_hit_distribution = defaultdict(int)
+            component_hit_distribution = defaultdict(lambda: defaultdict(int))
+            payout_source_distribution = defaultdict(int)
 
+            for item in results:
+                for source, count in item.get("payout_source_distribution", {}).items():
+                    payout_source_distribution[source] += count
             for item in results:
                 for hits, count in item["hit_distribution"].items():
                     hit_distribution[int(hits)] += count
-            bonus_hit_distribution = defaultdict(int)
 
-            for item in results:
                 for value, count in item.get("bonus_hit_distribution", {}).items():
                     bonus_hit_distribution[value] += count
+
+                for component, values in item.get("component_hit_distribution", {}).items():
+                    component_hit_distribution[component]["hits"] += values.get("hits", 0)
+                    component_hit_distribution[component]["misses"] += values.get("misses", 0)
+
             profitable_decisions = sum(1 for item in results if item["profit"] > 0)
             losing_decisions = sum(1 for item in results if item["profit"] < 0)
             break_even_decisions = sum(1 for item in results if item["profit"] == 0)
+
+            zero_hit_rounds = hit_distribution.get(0, 0)
+
+            paying_high_rounds = sum(
+                count
+                for hits, count in hit_distribution.items()
+                if int(hits) >= 6
+            )
+
+            dead_zone_rounds = sum(
+                count
+                for hits, count in hit_distribution.items()
+                if 1 <= int(hits) <= 5
+            )
+
+            paying_rounds = zero_hit_rounds + paying_high_rounds
+
+            paying_round_rate = (
+                (paying_rounds / total_rounds) * 100
+                if total_rounds > 0
+                else 0.0
+            )
+
+            dead_zone_rate = (
+                (dead_zone_rounds / total_rounds) * 100
+                if total_rounds > 0
+                else 0.0
+            )
+
+            component_summary = {}
+
+            for component, values in component_hit_distribution.items():
+                hits = values.get("hits", 0)
+                misses = values.get("misses", 0)
+                total = hits + misses
+                hit_rate = (hits / total) * 100 if total > 0 else 0.0
+
+                component_summary[component] = {
+                    "hits": hits,
+                    "misses": misses,
+                    "total": total,
+                    "hit_rate": round(hit_rate, 4),
+                }
 
             return {
                 "stake_per_round": round(stake, 2),
@@ -1192,7 +1381,263 @@ class Command(BaseCommand):
                 "break_even_decisions": break_even_decisions,
                 "hit_distribution": dict(sorted(hit_distribution.items())),
                 "bonus_hit_distribution": dict(bonus_hit_distribution),
+                "zero_hit_rounds": zero_hit_rounds,
+                "paying_high_rounds": paying_high_rounds,
+                "dead_zone_rounds": dead_zone_rounds,
+                "paying_rounds": paying_rounds,
+                "paying_round_rate": round(paying_round_rate, 4),
+                "dead_zone_rate": round(dead_zone_rate, 4),
+                "component_summary": component_summary,
+                "payout_source_distribution": dict(payout_source_distribution),
             }
+
+        def summarize_confidence(results):
+            thresholds = [50, 55, 60, 65, 70, 75, 80, 85]
+            output = {}
+
+            for threshold in thresholds:
+                filtered = [
+                    item["profit_result"]
+                    for item in results
+                    if item["confidence_score"] >= threshold
+                ]
+
+                if filtered:
+                    summary = summarize_profit(filtered)
+                    output[str(threshold)] = {
+                        "played_decisions": len(filtered),
+                        "skipped_decisions": len(results) - len(filtered),
+                        "roi": summary["roi"],
+                        "profit": summary["total_profit"],
+                        "cost": summary["total_cost"],
+                        "return": summary["total_return"],
+                        "paying_round_rate": summary["paying_round_rate"],
+                        "dead_zone_rate": summary["dead_zone_rate"],
+                        "hit_distribution": summary["hit_distribution"],
+                    }
+                else:
+                    output[str(threshold)] = {
+                        "played_decisions": 0,
+                        "skipped_decisions": len(results),
+                        "roi": None,
+                        "profit": None,
+                    }
+
+            buckets = {
+                "0_49": [],
+                "50_59": [],
+                "60_69": [],
+                "70_79": [],
+                "80_100": [],
+            }
+
+            for item in results:
+                score = item["confidence_score"]
+
+                if score < 50:
+                    buckets["0_49"].append(item["profit_result"])
+                elif score < 60:
+                    buckets["50_59"].append(item["profit_result"])
+                elif score < 70:
+                    buckets["60_69"].append(item["profit_result"])
+                elif score < 80:
+                    buckets["70_79"].append(item["profit_result"])
+                else:
+                    buckets["80_100"].append(item["profit_result"])
+
+            bucket_output = {}
+
+            for bucket_name, bucket_results in buckets.items():
+                if bucket_results:
+                    summary = summarize_profit(bucket_results)
+                    bucket_output[bucket_name] = {
+                        "decisions": len(bucket_results),
+                        "roi": summary["roi"],
+                        "profit": summary["total_profit"],
+                        "cost": summary["total_cost"],
+                        "return": summary["total_return"],
+                        "paying_round_rate": summary["paying_round_rate"],
+                        "dead_zone_rate": summary["dead_zone_rate"],
+                    }
+                else:
+                    bucket_output[bucket_name] = {
+                        "decisions": 0,
+                        "roi": None,
+                        "profit": None,
+                    }
+
+            return {
+                "thresholds": output,
+                "buckets": bucket_output,
+            }
+
+        def calculate_confidence(
+            current_index,
+            selected_numbers,
+            selected_probabilities,
+            selected_components,
+            regime,
+            selected_mode,
+            regime_train_summary,
+        ):
+            score = 0.0
+            reasons = []
+
+            avg_probability = float(np.mean(selected_probabilities))
+            max_probability = float(np.max(selected_probabilities))
+            min_probability = float(np.min(selected_probabilities))
+
+            above_baseline_count = sum(
+                1 for probability in selected_probabilities
+                if probability > baseline_target_probability
+            )
+
+            strong_above_baseline_count = sum(
+                1 for probability in selected_probabilities
+                if probability > baseline_target_probability * 1.20
+            )
+
+            score += min(25.0, above_baseline_count * 1.5)
+            score += min(15.0, strong_above_baseline_count * 2.0)
+
+            if avg_probability > baseline_target_probability:
+                score += 10.0
+                reasons.append("average probability above target baseline")
+
+            if max_probability > baseline_target_probability * 1.35:
+                score += 7.0
+                reasons.append("has at least one very strong number")
+
+            all_components = []
+
+            for item in selected_components:
+                all_components.extend(item["components"])
+
+            component_counts = defaultdict(int)
+
+            for component in all_components:
+                component_counts[component] += 1
+
+            strong_component_count = (
+                component_counts["shape"]
+                + component_counts["shape_center"]
+                + component_counts["movement_target"]
+                + component_counts["board_pattern"]
+            )
+
+            if component_counts["shape"] >= 3:
+                score += 10.0
+                reasons.append("shape component has multiple numbers")
+
+            if component_counts["movement_target"] >= 2:
+                score += 8.0
+                reasons.append("movement target component active")
+
+            if component_counts["board_pattern"] >= 3:
+                score += 7.0
+                reasons.append("board pattern component active")
+
+            if strong_component_count >= 6:
+                score += 10.0
+                reasons.append("many picks come from strong components")
+
+            filler_count = component_counts["filler"]
+
+            if filler_count >= 5:
+                score -= 15.0
+                reasons.append("too many filler numbers")
+
+            pattern_score_last_5 = recent_from_1d_prefix(pattern_score_prefix, current_index, 5)
+            spread_score_last_5 = recent_from_1d_prefix(spread_score_prefix, current_index, 5)
+            movement_last_5 = recent_from_1d_prefix(abs_movement_prefix, current_index, 5)
+
+            if pattern_score_last_5 >= 12:
+                score += 8.0
+                reasons.append("recent pattern pressure is strong")
+
+            if movement_last_5 >= 3:
+                score += 5.0
+                reasons.append("recent movement is active")
+
+            if selected_mode == "spread" and spread_score_last_5 >= 80:
+                score += 7.0
+                reasons.append("spread mode matches recent spread pressure")
+
+            if selected_mode == "hybrid" and pattern_score_last_5 >= 8:
+                score += 5.0
+                reasons.append("hybrid mode matches pattern pressure")
+
+            if selected_mode == "miss" and regime in ["spread_low", "light_pattern"]:
+                score += 8.0
+                reasons.append("miss mode allowed in weak-pattern regime")
+
+            if regime_train_summary.get(regime):
+                regime_data = regime_train_summary[regime]
+                best_mode = regime_data.get("best_mode")
+
+                if best_mode == selected_mode:
+                    score += 10.0
+                    reasons.append(f"selected mode matches train ROI winner for {regime}")
+
+            operation = operation_labels[current_index]
+            streak = operation_streak_length[current_index]
+
+            if operation == "heavy_pattern" and streak >= 2 and selected_mode in ["raw", "hybrid"]:
+                score += 8.0
+                reasons.append("heavy pattern streak supports hit-seeking mode")
+
+            if operation == "scatter_spread" and selected_mode in ["spread", "miss"]:
+                score += 8.0
+                reasons.append("scatter operation supports spread/miss mode")
+
+            rows = [number_row(number) for number in selected_numbers]
+            columns = [number_column(number) for number in selected_numbers]
+
+            unique_rows = len(set(rows))
+            unique_columns = len(set(columns))
+
+            if unique_rows >= 6 and unique_columns >= 8:
+                score += 5.0
+                reasons.append("combo has good board coverage")
+
+            if unique_rows <= 3:
+                score -= 8.0
+                reasons.append("combo is too row-clustered")
+
+            if unique_columns <= 4:
+                score -= 8.0
+                reasons.append("combo is too column-clustered")
+
+            score = max(0.0, min(100.0, score))
+
+            if score >= confidence_play_threshold:
+                decision = "PLAY"
+            elif score >= confidence_watch_threshold:
+                decision = "WATCH"
+            else:
+                decision = "SKIP"
+
+            return {
+                "confidence_score": round(score, 4),
+                "decision": decision,
+                "reasons": reasons,
+                "avg_probability": round(avg_probability, 6),
+                "max_probability": round(max_probability, 6),
+                "min_probability": round(min_probability, 6),
+                "above_baseline_count": above_baseline_count,
+                "strong_above_baseline_count": strong_above_baseline_count,
+                "component_counts": dict(component_counts),
+                "unique_rows": unique_rows,
+                "unique_columns": unique_columns,
+                "operation": operation,
+                "operation_streak": int(streak),
+                "regime": regime,
+                "selected_mode": selected_mode,
+            }
+
+        # ------------------------------------------------------------
+        # Groups
+        # ------------------------------------------------------------
 
         train_groups = build_groups(train_draw_indices)
         test_groups = build_groups(test_draw_indices)
@@ -1215,14 +1660,20 @@ class Command(BaseCommand):
         log_done("Probabilities ready")
 
         # ------------------------------------------------------------
-        # Learn best mode per regime from training only
+        # Learn best mode per regime by TRAIN ROI
         # ------------------------------------------------------------
 
-        log_step("Learning best pick mode per regime from training period...")
+        log_step("Learning best pick mode per regime by ROI from training period...")
 
         train_mode_hits_by_regime = defaultdict(lambda: defaultdict(list))
+        train_mode_roi_by_regime = defaultdict(lambda: defaultdict(list))
 
-        for draw_index, positions in train_groups.items():
+        for counter, (draw_index, positions) in enumerate(train_groups.items(), start=1):
+            if counter % 500 == 0:
+                self.stdout.write(
+                    f"  analyzed train ROI modes for {counter:,}/{len(train_groups):,} decisions..."
+                )
+
             regime = decision_regime_by_index.get(draw_index, "normal_pattern")
 
             draw_probs = train_probabilities[positions]
@@ -1230,52 +1681,79 @@ class Command(BaseCommand):
             draw_features = X_train[positions]
             numbers = draw_features[:, 0].astype(int)
 
-            for mode in ["raw", "spread", "hybrid"]:
+            for mode in ["raw", "spread", "hybrid", "miss"]:
                 selected_indices = select_mode_indices(mode, draw_probs, numbers, pick)
+                selected_numbers = [int(numbers[index]) for index in selected_indices]
+
                 hits = int(draw_future_counts[selected_indices].sum())
+                profit_result = calculate_pick_profit(selected_numbers, draw_index)
+
                 train_mode_hits_by_regime[regime][mode].append(hits)
+                train_mode_roi_by_regime[regime][mode].append(profit_result["roi"])
 
         regime_mode_map = {}
         regime_train_summary = {}
 
         for regime in ["spread_low", "light_pattern", "normal_pattern", "heavy_pattern"]:
-            mode_averages = {}
+            mode_hit_averages = {}
+            mode_roi_averages = {}
 
-            for mode in ["raw", "spread", "hybrid"]:
-                values = train_mode_hits_by_regime[regime][mode]
-                mode_averages[mode] = float(np.mean(values)) if values else 0.0
+            for mode in ["raw", "spread", "hybrid", "miss"]:
+                hit_values = train_mode_hits_by_regime[regime][mode]
+                roi_values = train_mode_roi_by_regime[regime][mode]
 
-            best_mode_for_regime = max(mode_averages, key=mode_averages.get)
+                mode_hit_averages[mode] = float(np.mean(hit_values)) if hit_values else 0.0
+                mode_roi_averages[mode] = float(np.mean(roi_values)) if roi_values else -999999.0
+
+            best_mode_for_regime = max(mode_roi_averages, key=mode_roi_averages.get)
 
             regime_mode_map[regime] = best_mode_for_regime
             regime_train_summary[regime] = {
                 "best_mode": best_mode_for_regime,
-                "raw": round(mode_averages["raw"], 4),
-                "spread": round(mode_averages["spread"], 4),
-                "hybrid": round(mode_averages["hybrid"], 4),
+                "selection_metric": "roi",
+                "hit_averages": {
+                    "raw": round(mode_hit_averages["raw"], 4),
+                    "spread": round(mode_hit_averages["spread"], 4),
+                    "hybrid": round(mode_hit_averages["hybrid"], 4),
+                    "miss": round(mode_hit_averages["miss"], 4),
+                },
+                "roi_averages": {
+                    "raw": round(mode_roi_averages["raw"], 4),
+                    "spread": round(mode_roi_averages["spread"], 4),
+                    "hybrid": round(mode_roi_averages["hybrid"], 4),
+                    "miss": round(mode_roi_averages["miss"], 4),
+                },
             }
 
         log_done("Regime mode map learned")
+
+        self.stdout.write("")
+        self.stdout.write("Regime ROI mode map:")
+        for regime, data in regime_train_summary.items():
+            self.stdout.write(f"{regime}: {data}")
 
         # ------------------------------------------------------------
         # Test modes
         # ------------------------------------------------------------
 
-        log_step("Testing raw/spread/hybrid/regime-aware pick modes with ROI...")
+        log_step("Testing raw/spread/hybrid/miss/regime-aware modes with confidence...")
 
         raw_pick_total_hits = []
         spread_pick_total_hits = []
         hybrid_pick_total_hits = []
+        miss_pick_total_hits = []
         regime_pick_total_hits = []
         random_pick_total_hits = []
 
         raw_profit_results = []
         spread_profit_results = []
         hybrid_profit_results = []
+        miss_profit_results = []
         regime_profit_results = []
         random_profit_results = []
 
         regime_test_summary = defaultdict(lambda: defaultdict(list))
+        confidence_audits = []
 
         rng = np.random.default_rng(seed=42)
         unique_test_draw_indices = sorted(test_groups.keys())
@@ -1299,6 +1777,8 @@ class Command(BaseCommand):
             raw_indices = select_raw_pick(draw_probs, numbers, pick)
             spread_indices = select_spread_pick(draw_probs, numbers, pick)
             hybrid_indices = select_hybrid_pick(draw_probs, numbers, pick)
+            miss_indices = select_low_pick(draw_probs, numbers, pick)
+
             regime_indices = select_mode_indices(
                 selected_mode_for_regime,
                 draw_probs,
@@ -1315,35 +1795,97 @@ class Command(BaseCommand):
             raw_selected_numbers = [int(numbers[index]) for index in raw_indices]
             spread_selected_numbers = [int(numbers[index]) for index in spread_indices]
             hybrid_selected_numbers = [int(numbers[index]) for index in hybrid_indices]
+            miss_selected_numbers = [int(numbers[index]) for index in miss_indices]
             regime_selected_numbers = [int(numbers[index]) for index in regime_indices]
             random_selected_numbers = [int(numbers[index]) for index in random_indices]
 
             raw_hits = int(draw_future_counts[raw_indices].sum())
             spread_hits = int(draw_future_counts[spread_indices].sum())
             hybrid_hits = int(draw_future_counts[hybrid_indices].sum())
+            miss_hits = int(draw_future_counts[miss_indices].sum())
             regime_hits = int(draw_future_counts[regime_indices].sum())
             random_hits = int(draw_future_counts[random_indices].sum())
 
             raw_pick_total_hits.append(raw_hits)
             spread_pick_total_hits.append(spread_hits)
             hybrid_pick_total_hits.append(hybrid_hits)
+            miss_pick_total_hits.append(miss_hits)
             regime_pick_total_hits.append(regime_hits)
             random_pick_total_hits.append(random_hits)
+
+            regime_components = []
+            regime_component_map = {}
+
+            for local_index in regime_indices:
+                number = int(numbers[local_index])
+                probability = float(draw_probs[local_index])
+
+                explanation = explain_number_components(
+                    current_index=draw_index,
+                    number=number,
+                    probability=probability,
+                    baseline_probability=baseline_target_probability,
+                )
+
+                regime_components.append(explanation)
+                regime_component_map[number] = explanation["components"]
+
+            confidence = calculate_confidence(
+                current_index=draw_index,
+                selected_numbers=regime_selected_numbers,
+                selected_probabilities=[float(draw_probs[index]) for index in regime_indices],
+                selected_components=regime_components,
+                regime=regime,
+                selected_mode=selected_mode_for_regime,
+                regime_train_summary=regime_train_summary,
+            )
 
             raw_profit_results.append(calculate_pick_profit(raw_selected_numbers, draw_index))
             spread_profit_results.append(calculate_pick_profit(spread_selected_numbers, draw_index))
             hybrid_profit_results.append(calculate_pick_profit(hybrid_selected_numbers, draw_index))
-            regime_profit_results.append(calculate_pick_profit(regime_selected_numbers, draw_index))
+            miss_profit_results.append(calculate_pick_profit(miss_selected_numbers, draw_index))
+
+            regime_profit_result = calculate_pick_profit(
+                regime_selected_numbers,
+                draw_index,
+                component_map=regime_component_map,
+            )
+
+            regime_profit_results.append(regime_profit_result)
             random_profit_results.append(calculate_pick_profit(random_selected_numbers, draw_index))
+
+            confidence_audits.append(
+                {
+                    "draw_id": draw_ids[draw_index],
+                    "draw_index": int(draw_index),
+                    "selected_numbers": regime_selected_numbers,
+                    "selected_mode": selected_mode_for_regime,
+                    "regime": regime,
+                    "operation": operation_labels[draw_index],
+                    "zone": zone_labels[draw_index],
+                    "confidence_score": confidence["confidence_score"],
+                    "confidence_decision": confidence["decision"],
+                    "confidence_reasons": confidence["reasons"],
+                    "component_counts": confidence["component_counts"],
+                    "number_explanations": regime_components,
+                    "profit_result": regime_profit_result,
+                }
+            )
 
             regime_test_summary[regime]["regime_aware"].append(regime_hits)
             regime_test_summary[regime]["raw"].append(raw_hits)
             regime_test_summary[regime]["spread"].append(spread_hits)
             regime_test_summary[regime]["hybrid"].append(hybrid_hits)
+            regime_test_summary[regime]["miss"].append(miss_hits)
+
+        # ------------------------------------------------------------
+        # Summaries
+        # ------------------------------------------------------------
 
         raw_pick_hits = float(np.mean(raw_pick_total_hits))
         spread_pick_hits = float(np.mean(spread_pick_total_hits))
         hybrid_pick_hits = float(np.mean(hybrid_pick_total_hits))
+        miss_pick_hits = float(np.mean(miss_pick_total_hits))
         regime_pick_hits = float(np.mean(regime_pick_total_hits))
         random_pick_hits = float(np.mean(random_pick_total_hits))
 
@@ -1352,19 +1894,116 @@ class Command(BaseCommand):
         raw_lift = raw_pick_hits - theoretical_baseline
         spread_lift = spread_pick_hits - theoretical_baseline
         hybrid_lift = hybrid_pick_hits - theoretical_baseline
+        miss_lift = miss_pick_hits - theoretical_baseline
         regime_lift = regime_pick_hits - theoretical_baseline
         random_lift = random_pick_hits - theoretical_baseline
 
         raw_profit_summary = summarize_profit(raw_profit_results)
         spread_profit_summary = summarize_profit(spread_profit_results)
         hybrid_profit_summary = summarize_profit(hybrid_profit_results)
+        miss_profit_summary = summarize_profit(miss_profit_results)
         regime_profit_summary = summarize_profit(regime_profit_results)
         random_profit_summary = summarize_profit(random_profit_results)
 
+        confidence_summary = summarize_confidence(confidence_audits)
+        def compact_audit_item(item):
+            profit_result = item["profit_result"]
+
+            return {
+                "draw_id": item["draw_id"],
+                "draw_index": item["draw_index"],
+                "selected_numbers": item["selected_numbers"],
+                "selected_mode": item["selected_mode"],
+                "regime": item["regime"],
+                "operation": item["operation"],
+                "zone": item["zone"],
+                "confidence_score": item["confidence_score"],
+                "confidence_decision": item["confidence_decision"],
+                "confidence_reasons": item["confidence_reasons"],
+                "component_counts": item["component_counts"],
+                "cost": round(float(profit_result["cost"]), 2),
+                "return": round(float(profit_result["return"]), 2),
+                "profit": round(float(profit_result["profit"]), 2),
+                "roi": round(float(profit_result["roi"]), 4),
+                "hit_distribution": profit_result["hit_distribution"],
+                "bonus_hit_distribution": profit_result.get("bonus_hit_distribution", {}),
+                "round_details": profit_result.get("round_details", []),
+                "number_explanations": item.get("number_explanations", []),
+            }
+
+
+        high_confidence_wins = [
+            item for item in confidence_audits
+            if item["confidence_score"] >= confidence_play_threshold
+            and item["profit_result"]["profit"] > 0
+        ]
+
+        high_confidence_losses = [
+            item for item in confidence_audits
+            if item["confidence_score"] >= confidence_play_threshold
+            and item["profit_result"]["profit"] < 0
+        ]
+
+        low_confidence_wins = [
+            item for item in confidence_audits
+            if item["confidence_score"] < confidence_watch_threshold
+            and item["profit_result"]["profit"] > 0
+        ]
+
+        low_confidence_losses = [
+            item for item in confidence_audits
+            if item["confidence_score"] < confidence_watch_threshold
+            and item["profit_result"]["profit"] < 0
+        ]
+
+        audit_examples_by_quality = {
+            "high_confidence_wins": [
+                compact_audit_item(item)
+                for item in sorted(
+                    high_confidence_wins,
+                    key=lambda item: (
+                        item["confidence_score"],
+                        item["profit_result"]["profit"],
+                    ),
+                    reverse=True,
+                )[:6]
+            ],
+            "high_confidence_losses": [
+                compact_audit_item(item)
+                for item in sorted(
+                    high_confidence_losses,
+                    key=lambda item: (
+                        item["confidence_score"],
+                        item["profit_result"]["profit"],
+                    ),
+                )[:6]
+            ],
+            "low_confidence_wins": [
+                compact_audit_item(item)
+                for item in sorted(
+                    low_confidence_wins,
+                    key=lambda item: (
+                        item["confidence_score"],
+                        -item["profit_result"]["profit"],
+                    ),
+                )[:6]
+            ],
+            "low_confidence_losses": [
+                compact_audit_item(item)
+                for item in sorted(
+                    low_confidence_losses,
+                    key=lambda item: (
+                        item["confidence_score"],
+                        item["profit_result"]["profit"],
+                    ),
+                )[:6]
+            ],
+        }
         mode_scores = {
             "raw": raw_pick_hits,
             "spread": spread_pick_hits,
             "hybrid": hybrid_pick_hits,
+            "miss": miss_pick_hits,
             "regime_aware": regime_pick_hits,
         }
 
@@ -1376,6 +2015,7 @@ class Command(BaseCommand):
             "raw": raw_pick_total_hits[-200:],
             "spread": spread_pick_total_hits[-200:],
             "hybrid": hybrid_pick_total_hits[-200:],
+            "miss": miss_pick_total_hits[-200:],
             "regime_aware": regime_pick_total_hits[-200:],
         }[best_mode]
 
@@ -1384,7 +2024,7 @@ class Command(BaseCommand):
         for regime in ["spread_low", "light_pattern", "normal_pattern", "heavy_pattern"]:
             regime_test_output[regime] = {}
 
-            for mode in ["raw", "spread", "hybrid", "regime_aware"]:
+            for mode in ["raw", "spread", "hybrid", "miss", "regime_aware"]:
                 values = regime_test_summary[regime][mode]
                 regime_test_output[regime][mode] = (
                     round(float(np.mean(values)), 4)
@@ -1395,19 +2035,6 @@ class Command(BaseCommand):
             regime_test_output[regime]["selected_mode"] = regime_mode_map.get(regime)
 
         log_done("Testing complete")
-
-        # ------------------------------------------------------------
-        # Baseline target probability
-        # ------------------------------------------------------------
-
-        baseline_target_probability = 0.0
-
-        for hits in range(target_hits, horizon + 1):
-            baseline_target_probability += (
-                comb(horizon, hits)
-                * (0.25 ** hits)
-                * (0.75 ** (horizon - hits))
-            )
 
         # ------------------------------------------------------------
         # Score latest draw
@@ -1472,6 +2099,7 @@ class Command(BaseCommand):
         latest_raw_indices = select_raw_pick(latest_probabilities, latest_numbers_array, pick)
         latest_spread_indices = select_spread_pick(latest_probabilities, latest_numbers_array, pick)
         latest_hybrid_indices = select_hybrid_pick(latest_probabilities, latest_numbers_array, pick)
+        latest_miss_indices = select_low_pick(latest_probabilities, latest_numbers_array, pick)
         latest_regime_indices = select_mode_indices(
             latest_selected_mode,
             latest_probabilities,
@@ -1489,11 +2117,11 @@ class Command(BaseCommand):
                     "number": number,
                     "row": number_row(number),
                     "column": number_column(number),
-                    "probability": round(float(probability), 5),
-                    "probability_percent": round(float(probability) * 100, 3),
+                    "probability": round(float(probability), 6),
+                    "probability_percent": round(float(probability) * 100, 4),
                     "above_baseline": round(
                         (float(probability) - baseline_target_probability) * 100,
-                        3,
+                        4,
                     ),
                     "count_last_10": int(count_in_window(latest_index, number, 10)),
                     "count_last_20": int(count_in_window(latest_index, number, 20)),
@@ -1522,11 +2150,43 @@ class Command(BaseCommand):
         latest_raw_scores = selected_scores_from_indices(latest_raw_indices)
         latest_spread_scores = selected_scores_from_indices(latest_spread_indices)
         latest_hybrid_scores = selected_scores_from_indices(latest_hybrid_indices)
+        latest_miss_scores = selected_scores_from_indices(latest_miss_indices)
         latest_regime_scores = selected_scores_from_indices(latest_regime_indices)
+
+        latest_regime_numbers = [
+            int(latest_numbers_array[index])
+            for index in latest_regime_indices
+        ]
+
+        latest_regime_components = []
+
+        for local_index in latest_regime_indices:
+            number = int(latest_numbers_array[local_index])
+            probability = float(latest_probabilities[local_index])
+
+            explanation = explain_number_components(
+                current_index=latest_index,
+                number=number,
+                probability=probability,
+                baseline_probability=baseline_target_probability,
+            )
+
+            latest_regime_components.append(explanation)
+
+        latest_confidence = calculate_confidence(
+            current_index=latest_index,
+            selected_numbers=latest_regime_numbers,
+            selected_probabilities=[float(latest_probabilities[index]) for index in latest_regime_indices],
+            selected_components=latest_regime_components,
+            regime=latest_regime,
+            selected_mode=latest_selected_mode,
+            regime_train_summary=regime_train_summary,
+        )
 
         log_done(
             f"Latest draw scored | operation={operation_labels[latest_index]} "
-            f"| regime={latest_regime} | selected_mode={latest_selected_mode}"
+            f"| regime={latest_regime} | mode={latest_selected_mode} "
+            f"| confidence={latest_confidence['confidence_score']}"
         )
 
         # ------------------------------------------------------------
@@ -1555,7 +2215,7 @@ class Command(BaseCommand):
         log_step("Saving AI result...")
 
         result = KinoAIResult.objects.create(
-            model_name="number_ai_10game_v5_roi",
+            model_name="number_ai_v6_confidence_roi_components",
             train_draws=len(set(train_draw_indices.tolist())),
             test_draws=len(unique_test_draw_indices),
             baseline_top20_hits=theoretical_baseline,
@@ -1566,12 +2226,14 @@ class Command(BaseCommand):
             recall=recall,
             data={
                 "pick": pick,
-                "mode": "window_profit_backtest",
-                "feature_version": "v5_operation_vectors_profit_roi",
+                "mode": "confidence_roi_component_backtest",
+                "feature_version": "v6_confidence_roi_components",
                 "extra_features_enabled": True,
                 "regime_aware_enabled": True,
                 "operation_vectors_enabled": True,
                 "profit_backtest_enabled": True,
+                "component_audit_enabled": True,
+                "confidence_gate_enabled": True,
 
                 "horizon": horizon,
                 "decision_step": decision_step,
@@ -1609,29 +2271,40 @@ class Command(BaseCommand):
                 "latest_regime": latest_regime,
                 "latest_selected_mode": latest_selected_mode,
 
+                "latest_confidence": latest_confidence,
+                "confidence_summary": confidence_summary,
+                "audit_examples_by_quality": audit_examples_by_quality,
+                "confidence_play_threshold": confidence_play_threshold,
+                "confidence_watch_threshold": confidence_watch_threshold,
+                "latest_number_explanations": latest_regime_components,
+
                 "best_mode": best_mode,
 
                 "raw_pick_average_hits": raw_pick_hits,
                 "spread_pick_average_hits": spread_pick_hits,
                 "hybrid_pick_average_hits": hybrid_pick_hits,
+                "miss_pick_average_hits": miss_pick_hits,
                 "regime_pick_average_hits": regime_pick_hits,
                 "random_pick_average_hits": random_pick_hits,
 
                 "raw_lift": raw_lift,
                 "spread_lift": spread_lift,
                 "hybrid_lift": hybrid_lift,
+                "miss_lift": miss_lift,
                 "regime_lift": regime_lift,
                 "random_lift": random_lift,
 
                 "raw_profit_summary": raw_profit_summary,
                 "spread_profit_summary": spread_profit_summary,
                 "hybrid_profit_summary": hybrid_profit_summary,
+                "miss_profit_summary": miss_profit_summary,
                 "regime_profit_summary": regime_profit_summary,
                 "random_profit_summary": random_profit_summary,
 
                 "raw_pick_hits_by_test_decision": raw_pick_total_hits[-200:],
                 "spread_pick_hits_by_test_decision": spread_pick_total_hits[-200:],
                 "hybrid_pick_hits_by_test_decision": hybrid_pick_total_hits[-200:],
+                "miss_pick_hits_by_test_decision": miss_pick_total_hits[-200:],
                 "regime_pick_hits_by_test_decision": regime_pick_total_hits[-200:],
                 "random_pick_hits_by_test_decision": random_pick_total_hits[-200:],
 
@@ -1647,7 +2320,16 @@ class Command(BaseCommand):
                 "latest_raw_scores": latest_raw_scores,
                 "latest_spread_scores": latest_spread_scores,
                 "latest_hybrid_scores": latest_hybrid_scores,
+                "latest_miss_scores": latest_miss_scores,
                 "latest_regime_scores": latest_regime_scores,
+
+
+
+                "confidence_audit_examples": sorted(
+                    confidence_audits,
+                    key=lambda item: item["confidence_score"],
+                    reverse=True,
+                )[:50],
 
                 "feature_importance": feature_importance,
                 "created_at": timezone.now().isoformat(),
@@ -1661,7 +2343,7 @@ class Command(BaseCommand):
         # ------------------------------------------------------------
 
         self.stdout.write("")
-        self.stdout.write(self.style.SUCCESS("KINO AI ROI training finished."))
+        self.stdout.write(self.style.SUCCESS("KINO AI confidence training finished."))
         self.stdout.write(f"AI Result ID: {result.id}")
         self.stdout.write(f"Train decision points: {result.train_draws}")
         self.stdout.write(f"Test decision points: {result.test_draws}")
@@ -1677,6 +2359,7 @@ class Command(BaseCommand):
         self.stdout.write(f"Raw AI top {pick} hits: {raw_pick_hits:.3f} ({raw_lift:+.3f})")
         self.stdout.write(f"Spread AI top {pick} hits: {spread_pick_hits:.3f} ({spread_lift:+.3f})")
         self.stdout.write(f"Hybrid AI top {pick} hits: {hybrid_pick_hits:.3f} ({hybrid_lift:+.3f})")
+        self.stdout.write(f"Miss AI top {pick} hits: {miss_pick_hits:.3f} ({miss_lift:+.3f})")
         self.stdout.write(f"Regime-aware top {pick} hits: {regime_pick_hits:.3f} ({regime_lift:+.3f})")
         self.stdout.write("")
         self.stdout.write(f"Best overall hit-count mode: {best_mode}")
@@ -1692,6 +2375,7 @@ class Command(BaseCommand):
             ("Raw", raw_profit_summary),
             ("Spread", spread_profit_summary),
             ("Hybrid", hybrid_profit_summary),
+            ("Miss/Low-probability", miss_profit_summary),
             ("Regime-aware", regime_profit_summary),
             ("Random", random_profit_summary),
         ]:
@@ -1703,10 +2387,23 @@ class Command(BaseCommand):
             self.stdout.write(f"  Return: €{summary['total_return']:.2f}")
             self.stdout.write(f"  Profit: €{summary['total_profit']:.2f}")
             self.stdout.write(f"  ROI: {summary['roi']:+.4f}%")
-            self.stdout.write(f"  Profitable decisions: {summary['profitable_decisions']}")
-            self.stdout.write(f"  Losing decisions: {summary['losing_decisions']}")
-            self.stdout.write(f"  Break-even decisions: {summary['break_even_decisions']}")
+            self.stdout.write(f"  Paying rounds: {summary['paying_rounds']}")
+            self.stdout.write(f"  Paying round rate: {summary['paying_round_rate']:+.4f}%")
+            self.stdout.write(f"  Dead-zone rounds: {summary['dead_zone_rounds']}")
+            self.stdout.write(f"  Dead-zone rate: {summary['dead_zone_rate']:+.4f}%")
+            self.stdout.write(f"  Bonus hit distribution: {summary.get('bonus_hit_distribution', {})}")
             self.stdout.write(f"  Hit distribution: {summary['hit_distribution']}")
+            self.stdout.write(f"  Component summary: {summary.get('component_summary', {})}")
+
+        self.stdout.write("")
+        self.stdout.write("Confidence gate summary:")
+        for threshold, values in confidence_summary["thresholds"].items():
+            self.stdout.write(f"  Confidence >= {threshold}: {values}")
+
+        self.stdout.write("")
+        self.stdout.write("Confidence bucket summary:")
+        for bucket, values in confidence_summary["buckets"].items():
+            self.stdout.write(f"  {bucket}: {values}")
 
         self.stdout.write("")
         self.stdout.write(
@@ -1719,12 +2416,26 @@ class Command(BaseCommand):
             f"| score={latest_regime_score:.3f} "
             f"| mode={latest_selected_mode}"
         )
+        self.stdout.write(
+            f"Latest confidence: {latest_confidence['confidence_score']} "
+            f"| decision={latest_confidence['decision']}"
+        )
+        self.stdout.write(f"Confidence reasons: {latest_confidence['reasons']}")
 
         self.stdout.write("")
-        self.stdout.write(f"Top {pick} latest regime-aware picks:")
+        self.stdout.write(f"Top {pick} latest confidence-aware picks:")
         for item in latest_regime_scores:
             self.stdout.write(
                 f"#{item['rank']:02d} Number {item['number']:02d} | "
-                f"{item['probability_percent']:.3f}% | "
-                f"above target baseline {item['above_baseline']:+.3f}%"
+                f"{item['probability_percent']:.4f}% | "
+                f"above target baseline {item['above_baseline']:+.4f}%"
+            )
+
+        self.stdout.write("")
+        self.stdout.write("Latest number explanations:")
+        for item in latest_regime_components:
+            self.stdout.write(
+                f"Number {item['number']:02d} | "
+                f"components={item['components']} | "
+                f"reasons={item['reasons']}"
             )

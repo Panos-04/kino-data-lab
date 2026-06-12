@@ -1,182 +1,339 @@
-# 🎱 KINO Data Lab
+# KINO Data Lab
 
-A full-stack data analysis platform for **OPAP KINO** (Greek lottery), providing real-time statistical analysis, number relation tracking, heat mapping, and trend visualization across historical draw frames.
+A full-stack statistical analysis and machine learning dashboard for studying high-frequency KINO draw data.
 
----
+The project imports historical draw results from a public API, stores them in PostgreSQL, builds analytical features, detects board patterns, runs machine learning experiments, performs walk-forward backtesting, and visualizes model results in a React dashboard.
 
-## 📸 Overview
-
-KINO Data Lab gives players and analysts a deep look into KINO draw history through three core analytical views:
-
-- **Single Number Relations** — detailed co-occurrence analysis for a specific number
-- **General Relations** — hot, cold, and middle anchor numbers for any given frame window
-- **Trend Frames** — heat map visualization of all 80 numbers across a rolling 20-game base frame
+> This project is a data analysis and backtesting experiment. It is not betting advice and does not claim to predict random outcomes with certainty.
 
 ---
 
-## 🧱 Tech Stack
+## Project Status
+
+This project is currently paused, but the existing version already includes:
+
+* A Django backend with PostgreSQL
+* Public API data import pipeline
+* Incremental sync commands
+* Pattern and shape detection
+* Machine learning experiments
+* Backtesting and ROI simulation
+* React / TypeScript dashboard
+* Model audit reports
+* Near-miss and rescue-strategy analysis
+
+---
+
+## Tech Stack
 
 ### Backend
-- **Python / Django** (Django REST Framework)
-- ASGI server (`asgi.py`, `wsgi.py`)
-- Django app: `kino` with modules for `management`, `migrations`, `services`, `api`
-- Models, serializers, views, and URL routing (`models.py`, `serializers.py`, `views.py`, `urls.py`, `admin.py`, `apps.py`)
+
+* Python
+* Django
+* PostgreSQL
+* Django management commands
+* Scikit-learn
+* NumPy
+* REST API endpoints
 
 ### Frontend
-- **React + TypeScript** (Vite)
-- Pages: `SingleNumberRelationsPage.tsx`, `GeneralRelationsPage.tsx`, `TrendFramesPage.tsx`
-- API layer: `kino.ts` (typed API client)
-- Utilities: `frameSelection.ts`, `relationSelection.ts`, `window_relations.py`
-- Styling: `App.css`
-- Dark navy blue UI theme with amber/orange/red color coding
+
+* React
+* TypeScript
+* Vite
+* CSS dashboard UI
+* Data visualization components
+
+### Data / Analysis
+
+* Historical draw ingestion
+* Sliding-window analysis
+* Feature engineering
+* Logistic regression experiments
+* Walk-forward testing
+* ROI simulation
+* Model calibration checks
+* Pattern and shape detection
 
 ---
 
-## 📁 Project Structure
+## Main Features
 
-```
-kino-data-lab/
-├── backend/
-│   ├── kino/                        # Main Django app
-│   │   ├── api/                     # REST API endpoints
-│   │   ├── management/              # Django management commands
-│   │   ├── migrations/              # DB migrations
-│   │   ├── services/                # Business logic / analysis engine
-│   │   ├── admin.py
-│   │   ├── apps.py
-│   │   ├── models.py
-│   │   ├── serializers.py
-│   │   ├── urls.py
-│   │   └── views.py
-│   ├── asgi.py
-│   ├── settings.py
-│   ├── urls.py
-│   └── wsgi.py
-│
-└── frontend/
-    ├── public/
-    ├── src/
-    │   ├── api/
-    │   │   └── kino.ts              # API client
-    │   ├── assets/
-    │   ├── components/
-    │   ├── pages/
-    │   │   ├── GeneralRelationsPage.tsx
-    │   │   ├── SingleNumberRelationsPage.tsx
-    │   │   └── TrendFramesPage.tsx
-    │   ├── styles/
-    │   ├── utils/
-    │   │   ├── frameSelection.ts
-    │   │   └── relationSelection.ts
-    │   ├── App.css
-    │   ├── App.tsx
-    │   ├── index.html
-    │   ├── main.tsx
-    │   └── kino.ts
-    ├── eslint.config.js
-    ├── package.json
-    └── package-lock.json
+### 1. Historical Draw Import
+
+The backend imports KINO draw data from the OPAP public API and stores it locally in PostgreSQL.
+
+Supported import workflows include:
+
+* Importing a single day
+* Importing a date range
+* Syncing latest missing draws
+* Running the full processing pipeline
+
+Example commands:
+
+```bash
+python manage.py import_kino_range 2026-01-01 2026-06-10
+python manage.py sync_kino_latest
 ```
 
 ---
 
-## 🔍 Features
+### 2. PostgreSQL Data Storage
 
-### 1. Single Number Relations (`/single-number-relations`)
+Draws are stored in a structured database model, allowing historical analysis, indexing, and repeatable experiments.
 
-Analyzes the relationship of a **selected number** (e.g. number 35) with all other numbers across a configurable window of draws.
+Core stored data includes:
 
-**Controls:**
-- Window ID selection
-- Frame selector
-- Mode: `20 games / step 10` (configurable sliding window)
-
-**Stats displayed:**
-- **Selected number** (e.g. 35)
-- **Anchor appearances** — total appearances, split (e.g. `2 | 1`)
-- **Top connected numbers** — sorted by connection count, each showing:
-  - Number of shared appearances (connections)
-  - Split ratio (how many times they appeared together in each half of the window)
-  - Trend delta badge (e.g. `-2`, `0`)
-
-### 2. General Relations (`/general-relations`)
-
-Auto-selects **hot, cold, and middle** anchor numbers for the current frame.
-
-**Controls:**
-- Window ID & Frame selector
-- Mode: `20 games / step 10`
-
-**Anchor classifications:**
-- 🔴 **Hot** — high-frequency numbers in the current window (e.g. 77, 16, 23, 32, 41)
-- 🔵 **Cold** — low-frequency numbers (e.g. 74, 6, 11)
-- 🟡 **Middle** — moderate frequency (implied by the heat scale)
-
-Each anchor shows its **Heat value** (e.g. Heat 9, Heat 8) indicating relative draw frequency.
-
-### 3. Trend Frames (`/trends`)
-
-A **20-game base frame** heat map visualizing all 80 KINO numbers (1–80) in an 8×10 grid.
-
-**Features:**
-- Displays draw range (e.g. Draws `1303738 → 1303757`)
-- Each number cell shows:
-  - The **number** (large, centered)
-  - A **frequency count** below it
-- Color-coded by heat scale:
-  - 🔴 **Red** — hottest (most frequent), value `11+`
-  - 🟠 **Orange/Amber** — warm
-  - 🟡 **Yellow** — moderate
-  - ⚪ **Light/White** — cool
-  - 🔵 **Blue** — coldest (least frequent), value `0–1`
-- **Heat scale legend** at the top (0 → 11+, left = lower heat, right = hotter)
+* Draw ID
+* Draw timestamp
+* Drawn numbers
+* Analysis state
+* Sliding window results
+* Pattern events
+* Shape events
+* AI experiment results
 
 ---
 
-## ⚙️ Configuration
+### 3. Sliding Window Analysis
 
-### Backend (Django)
+The project analyzes recent draw windows to detect short-term and medium-term behavior.
 
-Configure your database and settings in `backend/settings.py`.
+Examples of tracked signals:
 
-```python
-# Example: SQLite for development
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
-    }
-}
+* Hot and cold numbers
+* Number gaps
+* Recent frequency
+* Board distribution
+* Row and column activity
+* Repeated number behavior
+
+---
+
+### 4. Board Pattern Detection
+
+The KINO board is treated as an 8x10 grid.
+
+The system analyzes:
+
+* Row concentration
+* Column concentration
+* Center / edge activity
+* Spread intensity
+* Heavy-pattern periods
+* Scatter periods
+* Quiet/random periods
+
+This creates a higher-level “operation state” for each draw.
+
+---
+
+### 5. Shape Detection
+
+The system detects recurring geometric formations on the number board.
+
+Implemented shape types include:
+
+* Cross
+* 2x2 box
+* L-shape
+* Vertical line
+* Horizontal line
+* Diagonal down
+* Diagonal up
+
+These shapes are used as additional model features and pattern-analysis signals.
+
+---
+
+### 6. Operation Sequence Analysis
+
+The project classifies draw behavior into operation states such as:
+
+* Heavy pattern
+* Normal pattern
+* Light pattern
+* Scatter spread
+* Quiet random
+
+It also tracks transitions between states, movement direction, streaks, zones, and center-of-mass movement across the board.
+
+---
+
+### 7. Machine Learning Experiments
+
+Several model versions were tested, starting from simple number-ranking models and moving toward more advanced feature sets.
+
+The later versions include:
+
+* Hot/cold features
+* Gap features
+* Board-position features
+* Row/column pattern features
+* Shape features
+* Movement features
+* Entropy/spread features
+* Operation-state features
+* Regime-aware selection logic
+
+The goal was not only to predict individual numbers, but also to evaluate whether model rankings were useful under realistic backtesting.
+
+---
+
+### 8. Walk-Forward Backtesting
+
+Instead of testing only on one static split, the project includes walk-forward style testing.
+
+This helps check whether a model performs consistently across different time periods instead of only fitting one historical section.
+
+Tracked metrics include:
+
+* Average hits
+* Profit / loss
+* ROI
+* Hit distribution
+* Model lift over baseline
+* Performance by regime
+* Performance by selection mode
+
+---
+
+### 9. ROI and Payout Simulation
+
+The backend simulates different ticket strategies and payout tables.
+
+Supported analysis includes:
+
+* Cost
+* Return
+* Profit
+* ROI
+* Hit distribution
+* Dead-zone rounds
+* Paying rounds
+* Bonus payout logic experiments
+
+This made it possible to compare models not only by hit count, but also by realistic payout behavior.
+
+---
+
+### 10. Model Auditing
+
+The project includes several audit reports to understand model behavior.
+
+Examples:
+
+* Calibration report
+* Feature group strength
+* High-confidence vs low-confidence performance
+* Near-miss analysis
+* Rescue-strategy comparison
+* Swap-model rescue experiment
+
+These reports helped identify whether the model was genuinely learning useful signals or simply overfitting noise.
+
+---
+
+## Advanced Experiments
+
+### Near-Miss Report
+
+A near-miss analyzer was added to study cases where the model reached 7, 8, or 9 hits.
+
+The report checks whether missing winning numbers were ranked close to the selected combo.
+
+This helped answer questions like:
+
+* Was the missing number inside ranks 13–20?
+* Was the model close but the selector skipped the number?
+* Did the model fail completely or only fail during final combo construction?
+
+---
+
+### Rescue Selector
+
+A rescue selector was tested to replace weak selected numbers with strong reserve numbers from ranks 13–20.
+
+Tested modes included:
+
+* Rescue 1
+* Rescue 2
+* Rescue 3
+* Smart Rescue 1
+* Safe Smart Rescue 1
+
+This experiment showed that simple hand-written rescue rules were not enough and that a learned swap model would be a cleaner next step.
+
+---
+
+### V8 Swap Model Experiment
+
+The final experimental direction was a second-stage swap model.
+
+The idea:
+
+1. Build the base regime-aware combo.
+2. Create a reserve pool from ranks 13–20.
+3. Generate all one-swap candidates.
+4. Calculate the historical profit delta of each swap.
+5. Train a model to predict whether a swap improves the result.
+6. Apply only the best predicted positive swap.
+
+This turned the selector into a machine-learning problem instead of relying only on manually written rules.
+
+---
+
+## Frontend Dashboard
+
+The React dashboard displays the main analysis results in a portfolio-friendly UI.
+
+Dashboard sections include:
+
+* AI result summaries
+* Profit cards
+* Best ROI mode
+* Latest predicted number sets
+* Feature strength
+* Calibration results
+* Walk-forward performance
+* Confidence audits
+* Near-miss reports
+* Rescue comparison reports
+* Swap model results
+
+---
+
+## Example Pipeline
+
+Run the full analysis pipeline:
+
+```bash
+python manage.py run_kino_pipeline --rebuild-shapes --rebuild-movements --ai-horizon 10 --ai-decision-step 5 --ai-pick 12 --ai-target-hits 3
 ```
 
-### Frontend (Vite + React)
+Run the latest V8 experiment:
 
-The frontend communicates with the Django backend via REST API calls defined in `src/api/kino.ts`. The base URL can be configured via environment variables.
-
-```env
-VITE_API_BASE_URL=http://localhost:8000
+```bash
+python manage.py train_number_ai_v8 --horizon 10 --decision-step 5 --pick 12 --target-hits 3 --stake 1 --payout-table kino
 ```
 
 ---
 
-## 🚀 Getting Started
+## Local Setup
 
-### Prerequisites
-
-- Python 3.10+
-- Node.js 18+
-- npm or yarn
-
-### Backend Setup
+### Backend
 
 ```bash
 cd backend
+python -m venv venv
+source venv/Scripts/activate
 pip install -r requirements.txt
 python manage.py migrate
 python manage.py runserver
 ```
 
-### Frontend Setup
+### Frontend
 
 ```bash
 cd frontend
@@ -184,94 +341,48 @@ npm install
 npm run dev
 ```
 
-The app will be available at `http://localhost:5173`.
-
 ---
 
-## 🔌 API Reference
+## PostgreSQL Configuration
 
-### General Relations
+The project uses a local PostgreSQL database.
 
-```
-GET /api/general-relations/?window_id=<id>&games=20&step=10
-```
+Example development configuration:
 
-Returns anchor numbers (hot/cold/middle) with heat values for the given window.
-
-**Response shape:**
-```json
-{
-  "anchors": [
-    { "number": 77, "type": "hot", "heat": 9 },
-    { "number": 74, "type": "cold", "heat": 1 }
-  ]
+```python
+DATABASES = {
+    "default": {
+        "ENGINE": "django.db.backends.postgresql",
+        "NAME": "kino_data_lab",
+        "USER": "kino_user",
+        "PASSWORD": "kino_password",
+        "HOST": "localhost",
+        "PORT": "5432",
+    }
 }
 ```
 
-### Single Number Relations
+---
 
-```
-GET /api/single-number-relations/?window_id=<id>&frame=<frame>&number=<n>
-```
+## What I Learned
 
-Returns co-occurrence statistics for a specific number relative to all others.
+This project helped me practice:
+
+* Designing a full-stack data application
+* Working with PostgreSQL instead of SQLite
+* Building repeatable data import pipelines
+* Creating Django management commands
+* Structuring machine learning experiments
+* Avoiding data leakage in backtesting
+* Comparing model results against baselines
+* Building React dashboards for complex backend data
+* Debugging model results through audit reports
+* Thinking critically about noisy datasets and unreliable patterns
 
 ---
 
-## 📊 Analysis Logic
+## Important Notes
 
-### Window & Frame System
+This project studies random draw data. The purpose is technical learning, statistical analysis, and full-stack engineering practice.
 
-- A **window** is a group of consecutive KINO draws
-- A **frame** is a subset within that window (e.g. frame 13 of a 20-game window with step 10)
-- The sliding window (`step 10`) moves forward by 10 draws per frame, allowing trend tracking over time
-
-### Heat Scoring
-
-Numbers are scored based on how frequently they appear in the selected window. The heat scale (0–11+) reflects draw frequency relative to the statistical mean for that window size.
-
-### Relation / Connection Scoring
-
-Two numbers are "connected" if they appear together in the same draw. The **split** value shows how that co-occurrence is distributed across the two halves of the window, indicating whether the relationship is recent or historical.
-
----
-
-## 🗃️ Database
-
-The project uses Django ORM with SQLite (default) or any Django-supported DB. Draw data is stored and queried via the `kino` app models.
-
-The `db.sqlite3` file at the backend root stores historical KINO draw data. You can seed it using Django management commands in `kino/management/`.
-
----
-
-## 🧪 Development Notes
-
-- The frontend uses **TypeScript** with strict typing for all API responses
-- Frame and relation selection logic is abstracted into utility modules (`frameSelection.ts`, `relationSelection.ts`)
-- The `GeneralRelationsPage` fetches data with `fetchGeneralRelations(selection.windowId, 20, 20)` and sets the first anchor as the default selected anchor
-- Error and loading states are handled per-page with `setLoading(false)` in `finally` blocks
-
----
-
-## 📦 Deployment
-
-The project is hosted on GitHub at:
-
-```
-https://github.com/Panos-04/kino-data-lab
-```
-
-To deploy:
-1. Push backend to a Python-compatible host (e.g. Railway, Render, or VPS)
-2. Build frontend: `npm run build` → serve `dist/` with Nginx or Vercel
-3. Set `VITE_API_BASE_URL` to your production API URL
-
----
-
-## 📝 License
-
-MIT — feel free to use, modify, and distribute.
-
----
-
-> Built with ❤️ for KINO analysis enthusiasts. Not affiliated with OPAP S.A.
+The project does not claim guaranteed prediction ability or financial profitability.

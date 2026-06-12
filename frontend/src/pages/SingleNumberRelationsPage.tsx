@@ -6,14 +6,14 @@ import {
 } from "../utils/relationSelection";
 import { fetchNumberRelations } from "../api/kino";
 import type { NumberRelations } from "../api/kino";
-
+import usePageTitle from "../hooks/usePageTitle";
 function SingleNumberRelationsPage() {
     const [selection, setSelection] = useState<RelationSelection | null>(() =>
         getRelationSelection()
     );
     const [relations, setRelations] = useState<NumberRelations | null>(null);
     const [loading, setLoading] = useState(false);
-
+    usePageTitle("Single Number Relations");
     useEffect(() => {
         function handleStorage(event: StorageEvent) {
             if (event.key !== getRelationStorageKey()) return;

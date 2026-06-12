@@ -8,14 +8,14 @@ import HeatLegend from "../components/HeatLegend";
 import KinoBoard from "../components/KinoBoard";
 import { saveRelationSelection } from "../utils/relationSelection";
 import { saveFrameSelection } from "../utils/frameSelection";
-
+import usePageTitle from "../hooks/usePageTitle";
 function TrendFramesPage() {
     const [windows, setWindows] = useState<WindowAnalysis[]>([]);
     const [windowSize, setWindowSize] = useState(20);
     const [stepSize, setStepSize] = useState(10);
     const [loading, setLoading] = useState(false);
     const [currentIndex, setCurrentIndex] = useState(0);
-
+    usePageTitle("Trend Frames");
     useEffect(() => {
         async function loadWindows() {
             setLoading(true);

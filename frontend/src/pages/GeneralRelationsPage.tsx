@@ -6,7 +6,7 @@ import {
 } from "../utils/frameSelection";
 import { fetchGeneralRelations } from "../api/kino";
 import type { GeneralRelations, GeneralRelationAnchor } from "../api/kino";
-
+import usePageTitle from "../hooks/usePageTitle";
 function getAnchorLabel(type: string) {
     if (type === "hot") return "Hot";
     if (type === "cold") return "Cold";
@@ -21,7 +21,7 @@ function GeneralRelationsPage() {
     const [selectedAnchor, setSelectedAnchor] =
         useState<GeneralRelationAnchor | null>(null);
     const [loading, setLoading] = useState(false);
-
+    usePageTitle("General Relations");
     useEffect(() => {
         function refreshSelection() {
             setSelection(getFrameSelection());
